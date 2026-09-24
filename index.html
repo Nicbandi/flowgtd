@@ -157,6 +157,7 @@ nav{flex:none;background:var(--sheet);border-top:1px solid var(--line)}
 .vnote{background:var(--sheet);border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:14px;
   white-space:pre-wrap;word-break:break-word;line-height:1.5}
 .vnote a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.tag.area{background:var(--line2);color:var(--muted);border:1px dashed var(--line)}
 .tag.sd{background:var(--line2);color:var(--muted)}
 .note{font-size:12.5px;color:var(--muted);margin-top:5px;white-space:pre-wrap}
 
@@ -337,7 +338,7 @@ var HORIZONS = [
 var state = {
   tab:"inbox", items:[], projects:[], areas:[], archive:[], archOpen:null,
   config:{contexts:DEFAULT_CTX.slice(),review:{done:{},last:null,history:[]},horizons:{h30:"",h40:"",h50:""}},
-  f:{ctx:"all",time:"all",energy:"all",prj:"all"},
+  f:{ctx:"all",time:"all",energy:"all",prj:"all",area:"all"},
   listTab:"calendar", modal:null, wiz:null, toastT:null
 };
 
@@ -696,7 +697,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="28 — 22 set 2026";
+var BUILD="29 — 23 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1039,6 +1040,7 @@ function vEngage(){
     if(f.time!=="all"&&(i.time||15)>+f.time)return false;
     if(f.energy!=="all"&&(i.energy||2)>+f.energy)return false;
     if(f.prj!=="all"&&(f.prj==="none"?i.projectId:i.projectId!==f.prj))return false;
+    if(f.area!=="all"){ var ap=i.projectId?prj(i.projectId):null; if(!ap||ap.areaId!==f.area) return false; }
     return true;
   }).sort(function(a,b){return (a.time||15)-(b.time||15);});
 
@@ -1055,6 +1057,10 @@ function vEngage(){
      TIMES.map(function(t){return chip("time",String(t.v),"≤ "+t.l);}).join("")+"</div>";
   h+='<div class="flabel">Energia</div><div class="chips">'+chip("energy","all","Qualsiasi")+
      ENERGY.map(function(e){return chip("energy",String(e.v),e.l);}).join("")+"</div>";
+  if(state.areas.length){
+    h+='<div class="flabel">Area di responsabilit\u00e0</div><div class="chips">'+chip("area","all","Tutte")+
+      state.areas.map(function(a){return chip("area",a.id,a.title);}).join("")+"</div>";
+  }
   var act=state.projects.filter(function(p){return p.status==="active";});
   if(act.length){
     h+='<div class="flabel">Progetto</div><div class="chips">'+chip("prj","all","Tutti")+chip("prj","none","Azioni singole")+
@@ -1112,22 +1118,42 @@ function vProjects(){
   h+='<div class="quote">Un progetto non si "fa": si fa la sua <b>prossima azione</b>. Un progetto senza prossima azione è un progetto fermo.</div>';
   h+='<button class="btn full" data-act="newprj" style="margin-bottom:14px">+ Nuovo progetto</button>';
   if(stalled.length) h+='<div class="eyebrow" style="color:var(--amber)">Fermi — senza prossima azione ('+stalled.length+")</div>"+stalled.map(prjRow).join("");
+  // in movimento, raggruppati per area di responsabilita'
   var ok=act.filter(function(p){return activeOf(p.id).length>0;});
-  if(ok.length) h+='<div class="eyebrow">In movimento ('+ok.length+")</div>"+ok.map(prjRow).join("");
+  if(ok.length){
+    var areas=state.areas.slice().sort(function(a,b){return str(a.title).localeCompare(str(b.title));});
+    areas.forEach(function(a){
+      var grp=ok.filter(function(p){return p.areaId===a.id;});
+      if(grp.length) h+='<div class="eyebrow">'+esc(a.title)+" ("+grp.length+")</div>"+
+        grp.map(function(p){return prjRow(p,{hideArea:true});}).join("");
+    });
+    var orphan=ok.filter(function(p){return !areaOf(p);});
+    if(orphan.length) h+='<div class="eyebrow">'+(state.areas.length?"Senza area":"In movimento")+" ("+orphan.length+")</div>"+
+      orphan.map(prjRow).join("");
+  }
   if(!act.length) h+='<div class="empty"><div class="big">Nessun progetto attivo</div>Tutto ciò che richiede più di un passo merita di stare qui.</div>';
   var sd=state.projects.filter(function(p){return p.status==="someday";});
   if(sd.length) h+='<div class="eyebrow">In incubazione ('+sd.length+")</div>"+sd.map(prjRow).join("");
   var dn=state.projects.filter(function(p){return p.status==="done";});
   if(dn.length) h+='<div class="eyebrow">Completati ('+dn.length+")</div>"+dn.map(prjRow).join("");
+  // il controllo che Allen chiede in revisione: aree senza nulla in movimento
+  var empty=state.areas.filter(function(a){return !act.some(function(p){return p.areaId===a.id;});});
+  if(empty.length) h+='<div class="eyebrow">Aree senza progetti attivi ('+empty.length+')</div>'+
+    '<p class="hint">Scoperte al momento: in revisione chiediti se una di queste chiede un progetto.</p>'+
+    '<div class="mindgrid">'+empty.map(function(a){return '<span class="mind">'+esc(a.title)+"</span>";}).join("")+"</div>";
   return h;
 }
-function prjRow(p){
+function areaOf(p){ return p&&p.areaId?state.areas.find(function(a){return a.id===p.areaId;}):null; }
+function prjRow(p,ctx){
+  ctx=ctx||{};
+  var ar=ctx.hideArea?null:areaOf(p);
   var n=activeOf(p.id).length;
   var pl=state.items.filter(function(i){return i.projectId===p.id&&(i.list==="project"||i.list==="inbox");}).length;
   var bits=[]; if(n)bits.push(n+" in gioco"); if(pl)bits.push(pl+" da smistare");
   var warn=p.status==="active"&&n===0?'<span class="pill">'+(pl?"da smistare":"senza azione")+"</span>":"";
   return '<button class="rowlink" data-act="openprj" data-id="'+esc(p.id)+'"><div class="rt"><div class="rn">'+(p.focus&&p.status==="active"?'<span style="color:var(--amber)">\u2605</span> ':"")+esc(p.title)+"</div>"+
-    '<div class="rs">'+(bits.length?bits.join(" · "):"nessuna azione ancora")+"</div></div>"+warn+
+    '<div class="rs">'+(bits.length?bits.join(" · "):"nessuna azione ancora")+"</div>"+
+    (ar?'<div class="meta" style="margin-top:6px"><span class="tag area">'+esc(ar.title)+"</span></div>":"")+"</div>"+warn+
     '<span style="color:var(--faint)">'+ICO.chev+"</span></button>";
 }
 
@@ -1975,6 +2001,7 @@ document.addEventListener("click",function(ev){
     var ps=state.projects.filter(function(pp){return pp.areaId===id;});
     var delArea=function(){ inBatch(function(){
       ps.forEach(function(pp){ var c=clone(pp); c.areaId=""; putDoc("projects",c); });
+      if(state.f.area===id) state.f.area="all";
       delDoc("areas",id); }); };
     if(ps.length) ask("L\u2019area «"+ar0.title+"» \u00e8 usata da "+plural(ps.length,"progetto","progetti")+
       ", che resteranno senza area.\n\nEliminarla?",delArea); else delArea();
