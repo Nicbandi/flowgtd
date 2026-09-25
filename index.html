@@ -315,8 +315,7 @@ var LISTS = {inbox:"In arrivo",project:"Piano di progetto",next:"Prossime azioni
 var LTAG = {inbox:["plan","In arrivo"],project:["plan","Da smistare"],next:["nxt","Prossima azione"],
             waiting:["wait","In attesa"],calendar:["cal","Calendario"],someday:["sd","Un giorno"],
             reference:["sd","Riferimento"],done:["sd","Fatta"],trash:["sd","Cestino"]};
-var ANY_CTX = "@ovunque";   // contesto speciale: non richiede un luogo, quindi compare anche negli altri
-var DEFAULT_CTX = ["@ufficio","@casa","@computer","@telefono","@commissioni","@agenda","@ovunque"];
+var DEFAULT_CTX = ["@ufficio","@casa","@computer","@telefono","@commissioni","@agenda"];
 var TIMES = [{v:5,l:"5 min"},{v:10,l:"10 min"},{v:15,l:"15 min"},{v:30,l:"30 min"},{v:60,l:"1 ora"},{v:120,l:"2 ore +"}];
 var ENERGY = [{v:1,l:"Bassa"},{v:2,l:"Media"},{v:3,l:"Alta"}];
 var REVIEW = [
@@ -741,7 +740,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="34 — 24 set 2026";
+var BUILD="35 — 25 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1117,10 +1116,7 @@ function vEngage(){
   var next=itemsIn("next");
   var f=state.f;
   var fl=next.filter(function(i){
-    // scegliendo un contesto specifico si vedono anche le azioni che non ne richiedono uno
-    if(f.ctx!=="all"){
-      if(f.ctx===ANY_CTX ? i.context!==ANY_CTX : (i.context!==f.ctx&&i.context!==ANY_CTX)) return false;
-    }
+    if(f.ctx!=="all"&&i.context!==f.ctx) return false;
     if(f.time!=="all"&&(i.time||15)>+f.time)return false;
     if(f.energy!=="all"&&(i.energy||2)>+f.energy)return false;
     if(f.prj!=="all"&&(f.prj==="none"?i.projectId:i.projectId!==f.prj))return false;
@@ -1136,8 +1132,7 @@ function vEngage(){
   h+=addBtn("next");
   h+='<div class="eyebrow">Filtri</div>';
   h+='<div class="flabel">Contesto</div><div class="chips">'+chip("ctx","all","Tutti")+
-     cfg.contexts.map(function(c){return chip("ctx",c,c);}).join("")+"</div>"+
-     (cfg.contexts.indexOf(ANY_CTX)>=0?'<p class="hint" style="margin-top:-4px">Scegliendo un contesto vedrai anche le azioni '+esc(ANY_CTX)+", che non richiedono un luogo.</p>":"");
+     cfg.contexts.map(function(c){return chip("ctx",c,c);}).join("")+"</div>";
   h+='<div class="flabel">Tempo che ho</div><div class="chips">'+chip("time","all","Qualsiasi")+
      TIMES.map(function(t){return chip("time",String(t.v),"≤ "+t.l);}).join("")+"</div>";
   h+='<div class="flabel">Energia</div><div class="chips">'+chip("energy","all","Qualsiasi")+
@@ -1431,7 +1426,7 @@ function startWizard(id,backPrj,fromStep){
   var it=state.items.find(function(x){return x.id===id;}); if(!it)return;
   state.wiz={id:id,step:"actionable",hist:[],path:[],back:backPrj?{t:"prj",id:backPrj}:null,d:{
     title:it.title,note:it.note||"",projectId:it.projectId||"",newPrj:"",outcome:"",
-    context:defaultCtx()||"@ovunque",time:15,energy:2,date:"",start:"",timer:null,left:600}};
+    context:defaultCtx(),time:15,energy:2,date:"",start:"",timer:null,left:600}};
   if(fromStep){ var pp=it.projectId?prj(it.projectId):null; state.wiz.step=fromStep; state.wiz.path=[pp?pp.title:"progetto","prossima azione"]; }
   open({t:"wizard"});
 }

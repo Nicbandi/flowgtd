@@ -1,7 +1,7 @@
 /* Service worker di FlowGTD.
    VERSION cambia a ogni build: al primo caricamento con rete la pagina nuova
    sostituisce quella in cache, cosi' non resti bloccato su una versione vecchia. */
-const VERSION = 'flowgtd-34';
+const VERSION = 'flowgtd-35';
 const CORE = ['./', './index.html', './manifest.webmanifest',
               './icon-192.png?v=30', './icon-512.png?v=30', './icon-maskable-512.png?v=30', './apple-touch-icon.png?v=30'];
 
