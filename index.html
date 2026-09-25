@@ -697,7 +697,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="29 — 23 set 2026";
+var BUILD="30 — 24 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1354,7 +1354,7 @@ function wpath(l){state.wiz.path.push(l);}
 function mWizard(){
   var w=state.wiz; if(!w)return"";
   var steps=["actionable","outcome","next","twomin","schedule","organize"];
-  var alias={nonaction:"actionable",newprj:"outcome",linkprj:"outcome",timer:"twomin",schedule2:"schedule"};
+  var alias={nonaction:"actionable",newprj:"outcome",linkprj:"outcome",timer:"twomin",schedule2:"schedule",waitdate:"schedule"};
   var si=Math.max(0,steps.indexOf(alias[w.step]||w.step));
   var bar='<div class="steps">'+steps.map(function(s,i){return '<i class="'+(i<=si?"on":"")+'"></i>';}).join("")+"</div>";
   var subj='<div class="subject"><div class="k">Elemento</div>'+esc(w.d.title)+"</div>";
@@ -1395,7 +1395,10 @@ function mWizard(){
   }
   else if(w.step==="next"){
     body=crumbs+'<div class="qhead">Qual è la prossima azione?</div><div class="qhelp">Il passo <b>fisico e visibile</b> successivo. Comincia con un verbo: telefonare, scrivere, cercare, comprare, chiedere…</div>'+
-      '<label class="f"><div class="lb">Prossima azione</div><input class="t" id="w_next" value="'+esc(w.d.title)+'"></label>'+
+      (w.d.fromNewPrj?'<p class="hint" style="margin-top:-8px">Il progetto si chiama \u00ab'+esc(prj(w.d.projectId)?prj(w.d.projectId).title:w.d.title)+
+        '\u00bb: qui serve il <b>primo passo</b>, non di nuovo il risultato.</p>':"")+
+      '<label class="f"><div class="lb">Prossima azione</div><input class="t" id="w_next" value="'+
+        (w.d.fromNewPrj?"":esc(w.d.title))+'" placeholder="Es. Chiamare la sarta"></label>'+
       '<label class="f"><div class="lb">Note (facoltative)</div><textarea class="t" id="w_note" placeholder="Numero di telefono, link, dettagli…">'+esc(w.d.note)+"</textarea></label>"+
       '<button class="btn pri full" data-act="w_nextok">Continua</button>';
   }
@@ -1415,7 +1418,14 @@ function mWizard(){
   else if(w.step==="schedule"){
     body=crumbs+'<div class="qhead">Deve accadere in un giorno preciso?</div><div class="qhelp">Sul calendario va solo il <b>terreno rigido</b>: appuntamenti e scadenze reali. Tutto il resto vive nelle prossime azioni.</div>'+
       opt("w_cal","Sì, data o ora specifica","Va sul calendario.")+
-      opt("w_anytime","No, appena posso","Va in prossime azioni, con contesto.");
+      opt("w_anytime","No, appena posso","Va in prossime azioni, con contesto.")+
+      opt("w_wait","Non dipende da me: sono in attesa","Aspetti una risposta, una consegna, un rimborso.")+
+      opt("w_later","Non adesso: un giorno / forse","Nessun impegno. La rileggi in revisione.");
+  }
+  else if(w.step==="waitdate"){
+    body=crumbs+'<div class="qhead">Quando la ricontrolli?</div><div class="qhelp">La data non \u00e8 un impegno: serve a ricordarti quando sollecitare. Puoi lasciarla vuota.</div>'+
+      '<label class="f"><div class="lb">Data del controllo (facoltativa)</div><input class="t" type="date" id="w_wdate" value=""></label>'+
+      '<button class="btn pri full" data-act="w_saveWait">Metti in attesa</button>';
   }
   else if(w.step==="schedule2"){
     body=crumbs+'<div class="qhead">Quando?</div>'+
@@ -1893,11 +1903,12 @@ document.addEventListener("click",function(ev){
       putDoc("projects",{id:pid,title:pn,outcome:w.d.outcome,status:"active",createdAt:Date.now()});
       addPlanned(pid,more);
     });
-    w.d.projectId=pid; wpath("nuovo progetto"); wgo("next"); return;
+    w.d.projectId=pid; w.d.fromNewPrj=true; wpath("nuovo progetto"); wgo("next"); return;
   }
   if(a==="w_pick"){ var pk=prj(id); if(!pk)return; w.d.projectId=id; wpath(pk.title); wgo("next"); return; }
   if(a==="w_nextok"){
     var n=document.getElementById("w_next"), nt=document.getElementById("w_note");
+    if(w.d.fromNewPrj&&!(n&&n.value.trim())){ toast("Serve la prima azione concreta"); return; }
     if(n&&n.value.trim())w.d.title=n.value.trim();
     if(nt)w.d.note=nt.value;
     wgo("twomin");return;
@@ -1915,6 +1926,9 @@ document.addEventListener("click",function(ev){
     wizFinish({list:"done",prevList:"next",doneAt:Date.now()}); toast("Fatta subito."); return;}
   if(a==="w_notwo"){ if(w.timerInt){clearInterval(w.timerInt);w.timerInt=null;} wpath("oltre 10 min"); wgo("schedule");return;}
   if(a==="w_cal"){wpath("terreno rigido");wgo("schedule2");return;}
+  if(a==="w_wait"){wpath("in attesa");wgo("waitdate");return;}
+  if(a==="w_later"){wpath("un giorno");wizFinish({list:"someday"});return;}
+  if(a==="w_saveWait"){wizFinish({list:"waiting",date:val("w_wdate")});return;}
   if(a==="w_anytime"){wpath("quando posso");wgo("organize");return;}
   if(a==="w_saveCal"){var dd=val("w_date"); if(!dd){toast("Serve una data");return;} wizFinish({list:"calendar",date:dd,start:dd?val("w_start"):""});return;}
   if(a==="w_ctx"){w.d.context=v;renderModal();return;}
