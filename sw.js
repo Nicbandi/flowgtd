@@ -1,9 +1,9 @@
 /* Service worker di FlowGTD.
    VERSION cambia a ogni build: al primo caricamento con rete la pagina nuova
    sostituisce quella in cache, cosi' non resti bloccato su una versione vecchia. */
-const VERSION = 'flowgtd-30';
+const VERSION = 'flowgtd-33';
 const CORE = ['./', './index.html', './manifest.webmanifest',
-              './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
+              './icon-192.png?v=30', './icon-512.png?v=30', './icon-maskable-512.png?v=30', './apple-touch-icon.png?v=30'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));

@@ -11,8 +11,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="FlowGTD">
-<link rel="apple-touch-icon" href="./apple-touch-icon.png">
-<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=30">
+<link rel="icon" href="./icon-192.png?v=30">
 <style>
 #acct{position:fixed;z-index:95;right:10px;top:calc(env(safe-area-inset-top,0px) + 52px);background:var(--sheet);
   border:1px solid var(--line);border-radius:14px;padding:12px;min-width:210px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:none}
@@ -162,8 +162,7 @@ nav{flex:none;background:var(--sheet);border-top:1px solid var(--line)}
 .note{font-size:12.5px;color:var(--muted);margin-top:5px;white-space:pre-wrap}
 
 /* ---------- chips ---------- */
-.chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;scrollbar-width:none}
-.chips::-webkit-scrollbar{display:none}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 8px}
 .chip{flex:none;border:1px solid var(--line);background:var(--sheet);border-radius:99px;
   padding:6px 12px;font-size:12.5px;font-weight:500;color:var(--muted)}
 .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -249,6 +248,8 @@ input.t:focus,textarea.t:focus,select.t:focus{border-color:var(--accent);box-sha
   background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:99px;font-size:13px;font-weight:500;
   z-index:80;max-width:90%;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.2)}
 .mindgrid{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.ctxdel{flex:none;width:24px;height:24px;border-radius:8px;color:var(--faint);font-size:16px;line-height:1;display:grid;place-items:center}
+.ctxdel:active{background:var(--danger-soft);color:var(--danger)}
 .mind{font-size:12.5px;padding:7px 11px;border-radius:10px;background:var(--sheet);border:1px solid var(--line);color:var(--muted)}
 .sep{height:1px;background:var(--line);margin:18px 0}
 .hint{font-size:12px;color:var(--faint);margin-top:-4px;margin-bottom:12px}
@@ -309,6 +310,7 @@ var LISTS = {inbox:"In arrivo",project:"Piano di progetto",next:"Prossime azioni
 var LTAG = {inbox:["plan","In arrivo"],project:["plan","Da smistare"],next:["nxt","Prossima azione"],
             waiting:["wait","In attesa"],calendar:["cal","Calendario"],someday:["sd","Un giorno"],
             reference:["sd","Riferimento"],done:["sd","Fatta"],trash:["sd","Cestino"]};
+var ANY_CTX = "@ovunque";   // contesto speciale: non richiede un luogo, quindi compare anche negli altri
 var DEFAULT_CTX = ["@ufficio","@casa","@computer","@telefono","@commissioni","@agenda","@ovunque"];
 var TIMES = [{v:5,l:"5 min"},{v:10,l:"10 min"},{v:15,l:"15 min"},{v:30,l:"30 min"},{v:60,l:"1 ora"},{v:120,l:"2 ore +"}];
 var ENERGY = [{v:1,l:"Bassa"},{v:2,l:"Media"},{v:3,l:"Alta"}];
@@ -337,7 +339,7 @@ var HORIZONS = [
 
 var state = {
   tab:"inbox", items:[], projects:[], areas:[], archive:[], archOpen:null,
-  config:{contexts:DEFAULT_CTX.slice(),review:{done:{},last:null,history:[]},horizons:{h30:"",h40:"",h50:""}},
+  config:{contexts:DEFAULT_CTX.slice(),defCtx:"",review:{done:{},last:null,history:[]},horizons:{h30:"",h40:"",h50:""}},
   f:{ctx:"all",time:"all",energy:"all",prj:"all",area:"all"},
   listTab:"calendar", modal:null, wiz:null, toastT:null
 };
@@ -434,13 +436,18 @@ function sanitize(coll,o){
   }
   return o;
 }
+function defaultCtx(){
+  var d=state.config.defCtx;
+  if(d&&state.config.contexts.indexOf(d)>=0) return d;
+  return state.config.contexts[0]||"";
+}
 function sanitizeConfig(c){
   c=c&&typeof c==="object"?c:{};
   var r=c.review&&typeof c.review==="object"?c.review:{}, done={}, hz={};
   if(r.done&&typeof r.done==="object") Object.keys(r.done).forEach(function(k){ if(r.done[k]===true) done[k]=true; });
   ["h30","h40","h50"].forEach(function(k){ hz[k]=c.horizons&&typeof c.horizons[k]==="string"?c.horizons[k]:""; });
   var ctx=Array.isArray(c.contexts)?c.contexts.filter(function(x){return typeof x==="string"&&x.trim();}):DEFAULT_CTX.slice();
-  return {contexts:ctx,review:{done:done,last:isNum(r.last)?r.last:null,
+  return {contexts:ctx,defCtx:typeof c.defCtx==="string"?c.defCtx:"",review:{done:done,last:isNum(r.last)?r.last:null,
     history:Array.isArray(r.history)?r.history.filter(isNum).slice(-20):[]},horizons:hz};
 }
 function cleanList(coll,arr){
@@ -697,7 +704,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="30 — 24 set 2026";
+var BUILD="33 — 24 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1036,7 +1043,10 @@ function vEngage(){
   var next=itemsIn("next");
   var f=state.f;
   var fl=next.filter(function(i){
-    if(f.ctx!=="all"&&i.context!==f.ctx)return false;
+    // scegliendo un contesto specifico si vedono anche le azioni che non ne richiedono uno
+    if(f.ctx!=="all"){
+      if(f.ctx===ANY_CTX ? i.context!==ANY_CTX : (i.context!==f.ctx&&i.context!==ANY_CTX)) return false;
+    }
     if(f.time!=="all"&&(i.time||15)>+f.time)return false;
     if(f.energy!=="all"&&(i.energy||2)>+f.energy)return false;
     if(f.prj!=="all"&&(f.prj==="none"?i.projectId:i.projectId!==f.prj))return false;
@@ -1052,7 +1062,8 @@ function vEngage(){
   h+=addBtn("next");
   h+='<div class="eyebrow">Filtri</div>';
   h+='<div class="flabel">Contesto</div><div class="chips">'+chip("ctx","all","Tutti")+
-     cfg.contexts.map(function(c){return chip("ctx",c,c);}).join("")+"</div>";
+     cfg.contexts.map(function(c){return chip("ctx",c,c);}).join("")+"</div>"+
+     (cfg.contexts.indexOf(ANY_CTX)>=0?'<p class="hint" style="margin-top:-4px">Scegliendo un contesto vedrai anche le azioni '+esc(ANY_CTX)+", che non richiedono un luogo.</p>":"");
   h+='<div class="flabel">Tempo che ho</div><div class="chips">'+chip("time","all","Qualsiasi")+
      TIMES.map(function(t){return chip("time",String(t.v),"≤ "+t.l);}).join("")+"</div>";
   h+='<div class="flabel">Energia</div><div class="chips">'+chip("energy","all","Qualsiasi")+
@@ -1325,7 +1336,12 @@ function renderModal(){
   }
   c.innerHTML='<div class="scrim" data-act="scrim"><div class="sheet" data-stop="1" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1">'+b+"</div></div>";
   if(!same&&!fid){ var sh=c.querySelector(".sheet"); if(sh) try{ sh.focus({preventScroll:true}); }catch(e){} }
-  if(vals) Object.keys(vals).forEach(function(k){ var e=document.getElementById(k); if(e&&e.value!==vals[k]) e.value=vals[k]; });
+  if(vals) Object.keys(vals).forEach(function(k){
+    var e=document.getElementById(k); if(!e||e.value===vals[k]) return;
+    // in un menu a tendina non si ripristina una scelta che nel frattempo non esiste piu'
+    if(e.tagName==="SELECT"&&![].some.call(e.options,function(o){return o.value===vals[k];})) return;
+    e.value=vals[k];
+  });
   if(fid){ var f=document.getElementById(fid);
     if(f){ f.focus(); try{ if(sel&&sel[0]!=null) f.setSelectionRange(sel[0],sel[1]); }catch(e){} } }
   restoreScroll(c,key); lastModalKey=key;
@@ -1340,7 +1356,7 @@ function startWizard(id,backPrj,fromStep){
   var it=state.items.find(function(x){return x.id===id;}); if(!it)return;
   state.wiz={id:id,step:"actionable",hist:[],path:[],back:backPrj?{t:"prj",id:backPrj}:null,d:{
     title:it.title,note:it.note||"",projectId:it.projectId||"",newPrj:"",outcome:"",
-    context:state.config.contexts[0]||"@ovunque",time:15,energy:2,date:"",start:"",timer:null,left:600}};
+    context:defaultCtx()||"@ovunque",time:15,energy:2,date:"",start:"",timer:null,left:600}};
   if(fromStep){ var pp=it.projectId?prj(it.projectId):null; state.wiz.step=fromStep; state.wiz.path=[pp?pp.title:"progetto","prossima azione"]; }
   open({t:"wizard"});
 }
@@ -1394,13 +1410,18 @@ function mWizard(){
           (p.outcome?'<div class="od">'+esc(p.outcome)+"</div>":"")+"</button>";}).join("");
   }
   else if(w.step==="next"){
-    body=crumbs+'<div class="qhead">Qual è la prossima azione?</div><div class="qhelp">Il passo <b>fisico e visibile</b> successivo. Comincia con un verbo: telefonare, scrivere, cercare, comprare, chiedere…</div>'+
+    var np=w.d.fromNewPrj?prj(w.d.projectId):null;
+    body=crumbs+(np?'<div class="quote" style="background:var(--accent-soft)">Progetto creato: <b>'+esc(np.title)+
+      "</b>. \u00c8 gi\u00e0 salvato; finch\u00e9 non ha una prossima azione risulta <b>fermo</b>.</div>":"")+
+      '<div class="qhead">'+(np?"Qual \u00e8 il primo passo?":"Qual è la prossima azione?")+
+      '</div><div class="qhelp">Il passo <b>fisico e visibile</b> successivo. Comincia con un verbo: telefonare, scrivere, cercare, comprare, chiedere…</div>'+
       (w.d.fromNewPrj?'<p class="hint" style="margin-top:-8px">Il progetto si chiama \u00ab'+esc(prj(w.d.projectId)?prj(w.d.projectId).title:w.d.title)+
         '\u00bb: qui serve il <b>primo passo</b>, non di nuovo il risultato.</p>':"")+
       '<label class="f"><div class="lb">Prossima azione</div><input class="t" id="w_next" value="'+
         (w.d.fromNewPrj?"":esc(w.d.title))+'" placeholder="Es. Chiamare la sarta"></label>'+
       '<label class="f"><div class="lb">Note (facoltative)</div><textarea class="t" id="w_note" placeholder="Numero di telefono, link, dettagli…">'+esc(w.d.note)+"</textarea></label>"+
-      '<button class="btn pri full" data-act="w_nextok">Continua</button>';
+      '<button class="btn pri full" data-act="w_nextok">Continua</button>'+
+      (w.d.fromNewPrj?'<button class="btn full" data-act="w_planlater" style="margin-top:8px">Lo definisco dopo, nella scheda del progetto</button>':"");
   }
   else if(w.step==="twomin"){
     body=crumbs+'<div class="qhead">Si fa in meno di 10 minuti?</div><div class="qhelp">Se sì, <b>falla adesso</b>: archiviarla, organizzarla e ritrovarla costerebbe più che farla.</div>'+
@@ -1485,7 +1506,7 @@ function mAdd(){
        lb("Progetto",'<select class="t" id="a_prj"><option value="">— azione singola —</option>'+
          act.map(function(p){return '<option value="'+esc(p.id)+'">'+esc(p.title)+"</option>";}).join("")+"</select>")+
        lb("Contesto",'<select class="t" id="a_ctx"><option value="">—</option>'+
-         state.config.contexts.map(function(c){return "<option>"+esc(c)+"</option>";}).join("")+"</select>")+
+         state.config.contexts.map(function(c){return "<option"+(c===defaultCtx()?" selected":"")+">"+esc(c)+"</option>";}).join("")+"</select>")+
        '<div class="flabel">Tempo</div><div class="chips">'+TIMES.map(function(t){
          return '<button class="chip'+(a.time===t.v?" on":"")+'" data-act="a_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>"+
        '<div class="flabel">Energia</div><div class="chips">'+ENERGY.map(function(e){
@@ -1762,9 +1783,14 @@ function mHorizon(){
 function mSettings(){
   var h=sheetHead("Impostazioni")+'<div class="sbody">';
   h+='<div class="eyebrow" style="margin-top:0">Contesti</div><p class="hint">I luoghi, gli strumenti o le persone che ti servono per agire.</p>';
+  // il nome non e' toccabile: si elimina solo dalla × , e con una conferma
   h+='<div class="mindgrid">'+state.config.contexts.map(function(c){
-    return '<button class="mind" data-act="s_delctx" data-v="'+esc(c)+'">'+esc(c)+" ×</button>";}).join("")+"</div>";
+    return '<span class="mind" style="display:inline-flex;align-items:center;gap:6px">'+esc(c)+
+      '<button class="ctxdel" data-act="s_delctx" data-v="'+esc(c)+'" aria-label="Elimina il contesto '+esc(c)+'">\u00d7</button></span>';}).join("")+"</div>";
   h+='<form id="sf"><div style="display:flex;gap:7px;margin-top:6px"><input class="t" id="si" placeholder="@nuovo-contesto" style="flex:1"><button class="btn pri" type="submit">+</button></div></form>';
+  h+='<label class="f" style="margin-top:12px"><div class="lb">Contesto proposto quando chiarisci</div>'+
+     '<select class="t" id="s_defctx"><option value="">— nessuno —</option>'+
+     state.config.contexts.map(function(c){return '<option'+(c===defaultCtx()?" selected":"")+">"+esc(c)+"</option>";}).join("")+"</select></label>";
   h+='<div class="sep"></div><div class="eyebrow">Aspetto</div><div class="chips">'+
    [["auto","Sistema"],["light","Chiaro"],["dark","Scuro"]].map(function(t){
      var cur=localStorage.getItem("flowgtd_theme")||"auto";
@@ -1806,6 +1832,9 @@ document.getElementById("capf").addEventListener("submit",function(e){
   if(i.value.trim()){capture(i.value);i.value="";toast("Catturato");}
 });
 
+document.addEventListener("change",function(e){
+  if(e.target&&e.target.id==="s_defctx"){ state.config.defCtx=e.target.value; putConfig(); toast(e.target.value?"Contesto proposto: "+e.target.value:"Nessun contesto proposto"); }
+});
 document.addEventListener("submit",function(e){
   if(e.target.id==="mf"){e.preventDefault();var i=document.getElementById("mi");
     var mt=i.value.trim(); if(mt){i.value="";capture(mt);toast("Catturato");refocus("mi");}}
@@ -1906,6 +1935,14 @@ document.addEventListener("click",function(ev){
     w.d.projectId=pid; w.d.fromNewPrj=true; wpath("nuovo progetto"); wgo("next"); return;
   }
   if(a==="w_pick"){ var pk=prj(id); if(!pk)return; w.d.projectId=id; wpath(pk.title); wgo("next"); return; }
+  if(a==="w_planlater"){
+    var lp=prj(w.d.projectId), sameTitle=lp&&str(lp.title).trim()===str(w.d.title).trim();
+    if(sameTitle) delDoc("items",w.id);                       // l'elemento e' diventato il progetto
+    else { var li=state.items.find(function(x){return x.id===w.id;});
+      if(li){ var lc=clone(li); lc.list="project"; lc.projectId=w.d.projectId; putDoc("items",lc); } }
+    var pid9=w.d.projectId; close(); open({t:"prj",id:pid9});
+    toast("Progetto creato: manca la prossima azione"); return;
+  }
   if(a==="w_nextok"){
     var n=document.getElementById("w_next"), nt=document.getElementById("w_note");
     if(w.d.fromNewPrj&&!(n&&n.value.trim())){ toast("Serve la prima azione concreta"); return; }
@@ -2051,7 +2088,7 @@ document.addEventListener("click",function(ev){
       if(state.f.ctx===v) state.f.ctx="all";
       putConfig(); });
       renderModal(); };
-    if(!users.length){ moveTo(""); return; }
+    if(!users.length){ ask("Eliminare il contesto "+v+"?",function(){ moveTo(""); }); return; }
     var others=state.config.contexts.filter(function(c){return c!==v;});
     choose(plural(users.length,"azione usa","azioni usano")+" "+v+".\n\nIn quale contesto le sposto?",
       others.map(function(c,ix){ return {k:"c"+ix,t:c,fn:function(){moveTo(c);}}; })
