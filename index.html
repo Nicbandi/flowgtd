@@ -149,6 +149,11 @@ nav{flex:none;background:var(--sheet);border-top:1px solid var(--line)}
 .tag.plan{background:var(--line2);color:var(--muted);border:1px dashed var(--line)}
 .star{flex:none;align-self:center;width:34px;height:34px;border-radius:10px;font-size:19px;line-height:1;color:var(--faint)}
 .star.on{color:var(--amber)}
+.grip{flex:none;align-self:center;width:30px;height:34px;color:var(--faint);font-size:15px;line-height:1;
+  display:grid;place-items:center;cursor:grab;touch-action:none}
+.grip:active{cursor:grabbing;color:var(--accent)}
+.item.dragging{opacity:.75;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.dragzone{display:block}
 .linkbtn{font-size:11px;font-weight:600;color:var(--muted);text-transform:none;letter-spacing:0;padding:2px 4px}
 .vtitle{font-family:var(--serif);font-size:21px;line-height:1.3;margin:2px 0 12px;word-break:break-word}
 .vgrid{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:14px;margin-bottom:14px;align-items:baseline}
@@ -426,6 +431,7 @@ function sanitize(coll,o){
   } else if(coll==="projects"){
     o.title=str(o.title); o.outcome=str(o.outcome); o.areaId=str(o.areaId);
     if(["active","someday","done"].indexOf(o.status)<0) o.status="active";
+    o.actionOrder=(Array.isArray(o.actionOrder)?o.actionOrder:[]).filter(function(x){return typeof x==="string";});
   } else if(coll==="areas"){
     o.title=str(o.title);
   } else if(coll==="archive"){
@@ -685,6 +691,37 @@ window.addEventListener("online",function(){ backoff=0; SYNC.net=false; schedule
 window.addEventListener("offline",function(){ SYNC.net=true; renderSync(); });
 document.addEventListener("visibilitychange",function(){ if(!document.hidden) scheduleFlush(0); });
 
+/* ---- trascinamento (Pointer Events: vale anche per il tocco) ----
+   Durante il trascinamento si muove solo il DOM; l'ordine si scrive al rilascio. */
+var DRAG=null;
+document.addEventListener("pointerdown",function(e){
+  var h=e.target&&e.target.closest?e.target.closest("[data-grip]"):null; if(!h) return;
+  var row=h.closest(".item"), zone=row&&row.closest(".dragzone"); if(!zone) return;
+  e.preventDefault();
+  DRAG={row:row,zone:zone,pid:zone.getAttribute("data-pid"),ptr:e.pointerId};
+  row.classList.add("dragging");
+  try{ h.setPointerCapture(e.pointerId); }catch(err){}
+});
+document.addEventListener("pointermove",function(e){
+  if(!DRAG||e.pointerId!==DRAG.ptr) return;
+  e.preventDefault();
+  var rows=[].slice.call(DRAG.zone.querySelectorAll(".item")), idx=rows.indexOf(DRAG.row);
+  for(var j=0;j<rows.length;j++){
+    if(j===idx) continue;
+    var b=rows[j].getBoundingClientRect(), mid=b.top+b.height/2;
+    if(j<idx&&e.clientY<mid){ DRAG.zone.insertBefore(DRAG.row,rows[j]); break; }
+    if(j>idx&&e.clientY>mid){ DRAG.zone.insertBefore(DRAG.row,rows[j].nextSibling); break; }
+  }
+});
+function endDrag(){
+  if(!DRAG) return;
+  var ids=[].map.call(DRAG.zone.querySelectorAll("[data-grip]"),function(x){return x.getAttribute("data-grip");});
+  var pid=DRAG.pid; DRAG.row.classList.remove("dragging"); DRAG=null;
+  applyOrder(pid,ids);
+}
+document.addEventListener("pointerup",endDrag);
+document.addEventListener("pointercancel",endDrag);
+
 /* ---- indicatore di stato ---- */
 function syncState(){
   var n=OUTBOX.length, f=FAILED.filter(function(x){return x.code!=="blocked";}).length, fb=FAILED.length-f;
@@ -704,7 +741,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="33 — 24 set 2026";
+var BUILD="34 — 24 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -852,6 +889,43 @@ function readRec(c){
 function linesOf(id){ var e=document.getElementById(id); return e?e.value.split(/\n/).map(function(x){return x.trim();}).filter(Boolean):[]; }
 function addPlanned(pid,titles){
   titles.forEach(function(t){ putDoc("items",{id:uid(),title:t,list:"project",projectId:pid,createdAt:Date.now()}); });
+}
+
+/* ---- ordine manuale delle azioni dentro un progetto ----
+   L'ordine sta in project.actionOrder (elenco di id) e vale solo dentro il progetto:
+   trascinare non cambia lista, contesto, scadenza o stato. Materiale, cestino e
+   azioni completate non si ordinano. Le nuove arrivano in fondo. */
+var ORDERABLE=["project","inbox","next","waiting","calendar","someday"];
+function orderableOf(pid){ return state.items.filter(function(i){return i.projectId===pid&&ORDERABLE.indexOf(i.list)>=0;}); }
+function sectionOf(i){ return PLANNING.indexOf(i.list)>=0?"plan":(ACTIONABLE.indexOf(i.list)>=0?"live":"later"); }
+function normOrder(p){
+  var ids=orderableOf(p.id).sort(function(a,b){return (a.createdAt||0)-(b.createdAt||0);}).map(function(i){return i.id;});
+  var cur=(Array.isArray(p.actionOrder)?p.actionOrder:[]).filter(function(id){return ids.indexOf(id)>=0;});
+  ids.forEach(function(id){ if(cur.indexOf(id)<0) cur.push(id); });      // senza posizione: in fondo
+  return cur;
+}
+function sortByOrder(p,arr){
+  var ord=normOrder(p);
+  return arr.slice().sort(function(a,b){ return ord.indexOf(a.id)-ord.indexOf(b.id); });
+}
+/* riscrive solo le posizioni occupate dalla sezione toccata */
+function applyOrder(pid,sectionIds){
+  var p=prj(pid); if(!p) return;
+  var ord=normOrder(p), slots=[];
+  ord.forEach(function(id,i){ if(sectionIds.indexOf(id)>=0) slots.push(i); });
+  if(slots.length!==sectionIds.length) return;
+  sectionIds.forEach(function(id,k){ ord[slots[k]]=id; });
+  var c=clone(p); c.actionOrder=ord; putDoc("projects",c);
+}
+function moveAction(pid,id,where){
+  var p=prj(pid), it=state.items.find(function(x){return x.id===id;});
+  if(!p||!it) return;
+  var sect=sortByOrder(p,orderableOf(pid).filter(function(x){return sectionOf(x)===sectionOf(it);})).map(function(x){return x.id;});
+  var i=sect.indexOf(id); if(i<0||sect.length<2) return;
+  sect.splice(i,1);
+  var j = where==="top"?0 : where==="bottom"?sect.length : where==="up"?Math.max(0,i-1) : Math.min(sect.length,i+1);
+  sect.splice(j,0,id);
+  applyOrder(pid,sect);
 }
 
 /* ---- primo piano (priorita' relativa, quarto criterio di Allen) ----
@@ -1116,6 +1190,7 @@ function itemRow(i,ctx){
     '<button class="ibody" data-act="view" data-id="'+esc(i.id)+'"><div class="ititle">'+esc(i.title)+"</div>"+
     (i.note?'<div class="note">'+esc(i.note)+"</div>":"")+
     (tags?'<div class="meta">'+tags+"</div>":"")+"</button>"+send+
+    (ctx.grip?'<button class="grip" data-grip="'+esc(i.id)+'" aria-label="Trascina per riordinare">\u283f</button>':"")+
     (ctx.star&&i.list!=="done"?'<button class="star'+(i.focus?" on":"")+'" data-act="focus" data-id="'+esc(i.id)+'" aria-pressed="'+(!!i.focus)+
       '" aria-label="'+(i.focus?"Togli dal primo piano":"Metti in primo piano")+'">'+(i.focus?"\u2605":"\u2606")+"</button>":"")+"</div>";
 }
@@ -1563,6 +1638,10 @@ function mView(){
   if(i.time) row("Tempo",esc(timeLabel(i.time)));
   if(i.energy) row("Energia",esc((ENERGY[i.energy-1]||{}).l||""));
   if(i.focus) row("Priorit\u00e0",'<span style="color:var(--amber)">\u2605 In primo piano</span>');
+  if(p&&ORDERABLE.indexOf(i.list)>=0&&orderableOf(p.id).filter(function(x){return sectionOf(x)===sectionOf(i);}).length>1)
+    row("Ordine nel progetto",
+      '<div class="btnrow">'+[["top","\u21c8 In cima"],["up","\u2191 Su"],["down","\u2193 Gi\u00f9"],["bottom","\u21ca In fondo"]]
+        .map(function(o){return '<button class="btn sm" data-act="v_move" data-v="'+o[0]+'" data-id="'+esc(i.id)+'">'+o[1]+"</button>";}).join("")+"</div>");
   if(p) row("Progetto",'<button class="btn sm" data-act="e_open" data-id="'+esc(p.id)+'">'+(p.focus&&p.status==="active"?"\u2605 ":"")+esc(p.title)+" \u2192</button>");
   return '<div class="shead"><div class="st" id="sheet-title">'+esc((LTAG[i.list]||["",LISTS[i.list]||""])[1])+"</div>"+
     '<button class="icon-btn" data-act="edit" data-id="'+esc(i.id)+'" aria-label="Modifica">'+ICO.pen+"</button>"+
@@ -1692,6 +1771,11 @@ function mEdit(){
 }
 
 /* --- progetto --- */
+/* una sezione riordinabile: le righe hanno la maniglia e stanno in un contenitore proprio */
+function zone(p,arr){
+  return '<div class="dragzone" data-pid="'+esc(p.id)+'">'+
+    sortByOrder(p,arr).map(function(i){return itemRow(i,{inProject:true,grip:arr.length>1});}).join("")+"</div>";
+}
 function mPrj(){
   var p=prj(state.modal.id); if(!p)return"";
   var acts=state.items.filter(function(i){return i.projectId===p.id&&i.list!=="trash";});
@@ -1712,15 +1796,15 @@ function mPrj(){
   h+='<div class="eyebrow">Butta giù le azioni</div>';
   h+='<p class="hint">Scrivile tutte senza filtrare. Restano qui finché non le smisti nelle liste operative.</p>';
   h+='<form id="p_addf"><div style="display:flex;gap:7px;margin-bottom:10px"><input class="t" id="p_add" placeholder="Un\'azione del progetto…" style="flex:1" enterkeyhint="done"><button class="btn pri" type="submit" style="flex:none">Aggiungi</button></div></form>';
-  if(plan.length) h+=plan.map(function(i){return itemRow(i,{inProject:true});}).join("");
+  if(plan.length) h+=zone(p,plan);
 
   h+='<div class="eyebrow">In gioco ('+live.length+")</div>";
   if(!live.length) h+='<div class="quote" style="background:var(--amber-soft);border-left-color:var(--amber)">Questo progetto è fermo: nessuna azione è ancora nelle liste operative. Smistane almeno una.</div>';
-  else h+=live.map(function(i){return itemRow(i,{inProject:true});}).join("");
+  else h+=zone(p,live);
 
   if(later.length) h+='<div class="eyebrow">In sospeso ('+later.length+")</div>"+
     '<p class="hint">Idee legate al progetto, senza impegno: le rivedi in revisione.</p>'+
-    later.map(function(i){return itemRow(i,{inProject:true});}).join("");
+    zone(p,later);
 
   // materiale di consultazione del progetto: checklist, documenti, dati. Non sono impegni.
   h+='<div class="eyebrow">Materiale ('+mat.length+")</div>"+
@@ -1892,6 +1976,7 @@ document.addEventListener("click",function(ev){
     putDoc("items",o); if(back) open(back); else close();
     toast(back&&L==="reference"?"Materiale aggiunto al progetto":"Aggiunta in "+LISTS[L]); return;
   }
+  if(a==="v_move"){ var mi=state.items.find(function(x){return x.id===id;}); if(mi&&mi.projectId) moveAction(mi.projectId,id,v); return; }
   if(a==="gcal"){ var gi=state.items.find(function(x){return x.id===id;}); if(gi&&gi.date) calDialog(gi); return; }
   if(a==="edit"){open({t:"edit",id:id,fromView:!!(state.modal&&state.modal.t==="view")});return;}
   if(a==="openprj"){open({t:"prj",id:id});return;}
