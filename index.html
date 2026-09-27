@@ -740,7 +740,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="35 — 25 set 2026";
+var BUILD="36 — 25 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -964,6 +964,7 @@ function deleteProject(pid){
         if(trashOpen&&(isAct(c)||isPlan(c))) c.list="trash";       // riferimenti e idee restano, scollegati
         putDoc("items",c);
       });
+      if(state.f.prj===pid) state.f.prj="all";
       delDoc("projects",pid);
     });
     close(); toast(trashOpen?"Progetto eliminato, azioni aperte nel cestino":"Progetto eliminato");
@@ -990,7 +991,7 @@ function completeProject(c4,after){
         } else c.projectId="";
         putDoc("items",c);
       });       // riferimenti e idee Un giorno restano collegati al progetto completato
-      c4.status="done"; c4.doneAt=Date.now(); putDoc("projects",c4);
+      c4.status="done"; c4.doneAt=Date.now(); if(state.f.prj===c4.id) state.f.prj="all"; putDoc("projects",c4);
     });
     if(after) after();
     toast("Progetto completato");
@@ -1141,10 +1142,20 @@ function vEngage(){
     h+='<div class="flabel">Area di responsabilit\u00e0</div><div class="chips">'+chip("area","all","Tutte")+
       state.areas.map(function(a){return chip("area",a.id,a.title);}).join("")+"</div>";
   }
+  // con molti progetti le pastiglie diventano ingestibili: menu a tendina, raggruppato per area
   var act=state.projects.filter(function(p){return p.status==="active";});
   if(act.length){
-    h+='<div class="flabel">Progetto</div><div class="chips">'+chip("prj","all","Tutti")+chip("prj","none","Azioni singole")+
-      act.map(function(p){return chip("prj",p.id,p.title);}).join("")+"</div>";
+    var opt2=function(v,l,sel){ return '<option value="'+esc(v)+'"'+(state.f.prj===v?" selected":"")+">"+esc(l)+"</option>"; };
+    var byTitle=function(a,b){ return str(a.title).localeCompare(str(b.title)); };
+    var body2=opt2("all","Tutti")+opt2("none","Azioni singole");
+    state.areas.slice().sort(byTitle).forEach(function(a){
+      var grp=act.filter(function(pp){return pp.areaId===a.id;}).sort(byTitle);
+      if(grp.length) body2+='<optgroup label="'+esc(a.title)+'">'+grp.map(function(pp){return opt2(pp.id,pp.title);}).join("")+"</optgroup>";
+    });
+    var orph=act.filter(function(pp){return !areaOf(pp);}).sort(byTitle);
+    if(orph.length) body2+=(state.areas.length?'<optgroup label="Senza area">':"")+
+      orph.map(function(pp){return opt2(pp.id,pp.title);}).join("")+(state.areas.length?"</optgroup>":"");
+    h+='<div class="flabel">Progetto</div><select class="t" id="f_prj" style="margin-bottom:10px">'+body2+"</select>";
   }
   var fo=fl.filter(inFocus), rest=fl.filter(function(i){return !inFocus(i);});
   var rowS=function(i){return itemRow(i,{star:true});};
@@ -1912,6 +1923,7 @@ document.getElementById("capf").addEventListener("submit",function(e){
 });
 
 document.addEventListener("change",function(e){
+  if(e.target&&e.target.id==="f_prj"){ state.f.prj=e.target.value; render(); return; }
   if(e.target&&e.target.id==="s_defctx"){ state.config.defCtx=e.target.value; putConfig(); toast(e.target.value?"Contesto proposto: "+e.target.value:"Nessun contesto proposto"); }
 });
 document.addEventListener("submit",function(e){
