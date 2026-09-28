@@ -18,6 +18,11 @@
   border:1px solid var(--line);border-radius:14px;padding:12px;min-width:210px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:none}
 #acct.on{display:block}
 #acct .who{font-size:12px;color:var(--muted);margin-bottom:10px;word-break:break-all}
+#signbar{position:fixed;left:0;right:0;bottom:calc(64px + env(safe-area-inset-bottom,0px));z-index:92;
+  margin:0 10px;background:var(--danger-soft);border:1px solid var(--danger);border-radius:14px;
+  padding:10px 12px;display:none;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+#signbar.on{display:flex}
+#signbar span{flex:1;font-size:12.5px;color:var(--danger);font-weight:600;line-height:1.35}
 </style>
 <script>
 /* Ponte verso lo spazio dati: l'app chiede claude.use("db"), qui gliene diamo uno
@@ -2435,7 +2440,19 @@ function mountAccount(){
   document.addEventListener("click",e=>{ if(!panel.contains(e.target)&&e.target!==btn) panel.classList.remove("on"); });
   return panel;
 }
+function signBar(user){
+  var b=document.getElementById("signbar");
+  if(!b){
+    b=document.createElement("div"); b.id="signbar";
+    b.innerHTML='<span>Non sei collegato: le modifiche restano su questo dispositivo.</span>'+
+      '<button class="btn pri sm" id="signGo" style="flex:none">Accedi</button>';
+    document.body.appendChild(b);
+    b.querySelector("#signGo").onclick=login;
+  }
+  b.classList.toggle("on",!user);
+}
 function paint(panel,user){
+  signBar(user);
   if(!panel) return;
   panel.innerHTML = user
     ? '<div class="who">Collegato come<br><b>'+(user.email||user.uid)+"</b></div>"+
