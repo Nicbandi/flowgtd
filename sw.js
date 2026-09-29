@@ -1,7 +1,7 @@
 /* Service worker di FlowGTD.
    VERSION cambia a ogni build: al primo caricamento con rete la pagina nuova
    sostituisce quella in cache, cosi' non resti bloccato su una versione vecchia. */
-const VERSION = 'flowgtd-38';
+const VERSION = 'flowgtd-41';
 const CORE = ['./', './index.html', './manifest.webmanifest',
               './icon-192.png?v=30', './icon-512.png?v=30', './icon-maskable-512.png?v=30', './apple-touch-icon.png?v=30'];
 
@@ -10,7 +10,8 @@ self.addEventListener('install', e => {
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
-    .then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k))))
+    // solo le vecchie cache di FlowGTD: le altre applicazioni sullo stesso dominio restano intatte
+    .then(ks => Promise.all(ks.filter(k => k.startsWith('flowgtd-') && k !== VERSION).map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
@@ -19,6 +20,10 @@ self.addEventListener('activate', e => {
    - file dell'app, SDK Firebase e font: dalla cache, aggiornandoli in sottofondo;
    - tutto il resto, Firestore compreso, passa senza essere toccato. */
 const CACHEABLE = /^https:\/\/(www\.gstatic\.com\/firebasejs|fonts\.googleapis\.com|fonts\.gstatic\.com)/;
+
+self.addEventListener('message', e => {
+  if (e.data === 'version' && e.ports && e.ports[0]) e.ports[0].postMessage({ swVersion: VERSION });
+});
 
 self.addEventListener('fetch', e => {
   const req = e.request;
