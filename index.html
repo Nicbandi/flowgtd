@@ -33,7 +33,8 @@
   var resolveDb, settled=false;
   var ready=new Promise(function(r){ resolveDb=function(v){ if(!settled){ settled=true; r(v); } }; });
   window.__flusso={ resolveDb:function(v){ resolveDb(v); } };
-  setTimeout(function(){ resolveDb(null); },9000);  // non lasciamo l'app in attesa all'infinito
+  // scaduta l'attesa non si finge che non ci sia nessuno: l'identita' resta da verificare
+  setTimeout(function(){ resolveDb({unresolved:true}); },9000);
   window.claude={ use:function(n){ return n==="db"?ready:Promise.resolve(null); } };
 })();
 </script>
@@ -366,7 +367,7 @@ var state = {
    pre-importazione. Senza accesso si usa lo spazio "anon". Niente viene mai
    riassegnato da un account all'altro. */
 var DB=null, LOCAL=false, READY=false, CAN_SYNC=false;
-var SPACE="anon", SPACE_LABEL="", LAST_SPACE="flowgtd_lastSpace", LEGACY_KEY="flowgtd_v1", LEGACY_PRE="flowgtd_preimport";
+var SPACE="anon", SPACE_LABEL="", IDENT=false, PRE_OPS=[], IDENT_FAIL=false, LAST_SPACE="flowgtd_lastSpace", LEGACY_KEY="flowgtd_v1", LEGACY_PRE="flowgtd_preimport";
 function sKey(base){ return "flowgtd_"+SPACE+"_"+base; }
 function KEY(){ return sKey("v1"); }
 function KEY_PRE(){ return sKey("preimport"); }
@@ -433,6 +434,7 @@ function sanitize(coll,o){
     o.title=str(o.title); o.note=str(o.note); o.context=str(o.context); o.projectId=str(o.projectId);
     if(!LISTS[o.list]) o.list="inbox";
     if(o.prevList!==undefined&&!LISTS[o.prevList]) delete o.prevList;
+    if(o.trashFrom!==undefined&&!LISTS[o.trashFrom]) delete o.trashFrom;
     o.date=validDate(o.date)?o.date:"";
     o.start=o.date&&typeof o.start==="string"&&HHMM_RE.test(o.start)?o.start:"";
     o.time=isNum(o.time)&&o.time>0&&o.time<=600?o.time:null;
@@ -494,24 +496,30 @@ function enqueue(op){
   op.ts=Date.now(); OUTBOX.push(op);
 }
 var BATCH=0, BATCH_DIRTY=false;
-function commit(){ if(BATCH){ BATCH_DIRTY=true; return; } saveLocal(); render(); scheduleFlush(0); }
+function commit(){
+  if(BATCH){ BATCH_DIRTY=true; return; }
+  if(IDENT) saveLocal();        // prima di sapere in quale spazio siamo non si scrive su disco
+  render(); scheduleFlush(0);
+}
 function inBatch(fn){ BATCH++; try{ fn(); } finally { BATCH--; if(!BATCH&&BATCH_DIRTY){ BATCH_DIRTY=false; commit(); } } }
 
 function putDoc(coll,o){
   o.updatedAt=Date.now();
   upsert(state[coll],o);
-  enqueue({op:"set",coll:coll,id:o.id,o:clone(o)});
+  if(!IDENT) PRE_OPS.push({op:"set",coll:coll,o:clone(o)});   // scritto prima dell'identificazione
+  else enqueue({op:"set",coll:coll,id:o.id,o:clone(o)});
   commit();
 }
 /* after: chiavi di operazioni che il server deve aver CONFERMATO prima di questa */
 function delDoc(coll,id,after){
   var a=state[coll]; var i=a.findIndex(function(x){return x.id===id;}); if(i>=0)a.splice(i,1);
   var op={op:"del",coll:coll,id:id}; if(after&&after.length) op.after=after;
-  enqueue(op);
+  if(!IDENT) PRE_OPS.push(op); else enqueue(op);
   commit();
 }
 function putConfig(){
-  enqueue({op:"set",coll:"meta",id:"config",o:clone(state.config)});
+  if(!IDENT) PRE_OPS.push({op:"set",coll:"meta",id:"config",o:clone(state.config)});
+  else enqueue({op:"set",coll:"meta",id:"config",o:clone(state.config)});
   commit();
 }
 
@@ -521,7 +529,13 @@ function putConfig(){
    Ogni archiviazione crea documenti NUOVI e non li modifica mai: cosi' due
    dispositivi non possono sovrascrivere l'uno l'archivio dell'altro.
    Le azioni vengono tolte solo dopo che il loro archivio e' in coda. */
-var DOC_LIMIT=700000;   // limite prudenziale per documento (il server ne accetta circa 1 MB)
+var DOC_LIMIT=800000;   // byte: il server accetta 1 MiB per documento, qui resta un margine
+function bytesOf(x){
+  var t=typeof x==="string"?x:JSON.stringify(x);
+  if(typeof TextEncoder!=="undefined"){ try{ return new TextEncoder().encode(t).length; }catch(e){} }
+  return unescape(encodeURIComponent(t)).length;        // ripiego: stessa misura in byte UTF-8
+}
+var DOC_OVERHEAD=2000;  // nomi dei campi, identificativi, struttura del documento
 var DOC_CAP=5000, ARCH_DAYS=30, ARCH_EVERY=7*86400000, ARCH_DONE=false, capWarned=false;
 function docCount(){ return state.items.length+state.projects.length+state.areas.length+state.archive.length+1; }
 function monthOf(ts){ var d=new Date(ts); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
@@ -554,9 +568,9 @@ function maybeArchive(force){
         chunk.forEach(function(e){ where[e.id]="archive/"+aid; });
         chunk=[]; size=0; };
       byMonth[m].forEach(function(e){
-        var sz=JSON.stringify(e).length;
-        if(sz>DOC_LIMIT){ tooBig.push(e.id); return; }     // da sola non entrerebbe: resta dov'e', intera
-        if(size+sz>DOC_LIMIT) emit();                      // una voce enorme finisce in un documento suo
+        var sz=bytesOf(e);
+        if(sz+DOC_OVERHEAD>DOC_LIMIT){ tooBig.push(e.id); return; }   // da sola non entrerebbe: resta dov'e', intera
+        if(size+sz+DOC_OVERHEAD>DOC_LIMIT) emit();                    // chiudo il blocco prima di sforare
         chunk.push(e); size+=sz;
       });
       emit();
@@ -703,11 +717,23 @@ function checkBoot(serverDocs){
 /* Passa a un altro spazio: niente dell'account precedente resta in memoria. */
 function switchSpace(id,label){
   SPACE=id; SPACE_LABEL=label||"";
+  IDENT=true;
   try{ localStorage.setItem(LAST_SPACE,id); }catch(e){}
   state.items=[]; state.projects=[]; state.areas=[]; state.archive=[];
   state.config={contexts:DEFAULT_CTX.slice(),defCtx:null,nextOrder:[],review:{done:{},last:null,history:[]},horizons:{h30:"",h40:"",h50:""}};
   OUTBOX=[]; FAILED=[]; FIRST={}; ARCH_DONE=false;
-  loadLocal(); BOOT_LOCAL=readLocal(); render();
+  loadLocal(); BOOT_LOCAL=readLocal();
+  applyPreOps(); saveLocal(); render();
+}
+/* Cio' che e' stato scritto prima di sapere in quale spazio siamo viene applicato
+   allo spazio risolto: niente va perso e niente finisce nel conto sbagliato. */
+function applyPreOps(){
+  var pre=PRE_OPS; PRE_OPS=[];
+  pre.forEach(function(o){
+    if(o.op==="del") delDoc(o.coll,o.id,o.after);
+    else if(o.coll==="meta"){ state.config=sanitizeConfig(o.o); putConfig(); }
+    else putDoc(o.coll,o.o);
+  });
 }
 /* Dati della vecchia memoria condivisa: non si deduce il proprietario.
    La copia non viene mai cancellata: resta recuperabile. */
@@ -719,23 +745,54 @@ function legacyDone(){ try{ return localStorage.getItem("flowgtd_legacyChoice_"+
 function legacyMark(){ try{ localStorage.setItem("flowgtd_legacyChoice_"+SPACE,"1"); }catch(e){} }
 function offerLegacy(){
   var d=legacyBlob(); if(!d||legacyDone()) return;
-  if(state.items.length||state.projects.length) return;           // qui ci sono gia' dati: non si tocca nulla
   ask("Su questo dispositivo ci sono "+plural(d.items.length,"elemento","elementi")+
       " salvati da una versione precedente, quando i dati non erano legati a un account.\n\n"+
       "Sono di "+(SPACE==="anon"?"questo spazio senza accesso":SPACE_LABEL||"questo account")+
-      "?\n\nLa copia precedente resta comunque sul dispositivo.",
-    function(){ legacyMark(); mergeBlob(d); toast("Dati precedenti aggiunti"); },
+      "?\n\nVerranno unite anche le modifiche non ancora sincronizzate. La copia precedente resta comunque sul dispositivo.",
+    function(){ legacyMark(); var n=mergeBlob(d);
+      toast("Dati precedenti recuperati: "+n.added+" aggiunti, "+n.updated+" aggiornati"+(n.removed?", "+n.removed+" rimossi":"")); },
     function(){ legacyMark(); });
 }
-/* Unisce senza sostituire: cio' che c'e' gia' non viene toccato. */
+/* Migrazione: porta tutto, non solo cio' che manca.
+   - documenti assenti: aggiunti;
+   - documenti presenti: vince la versione modificata piu' di recente;
+   - coda e rifiutate della vecchia copia: riapplicate, comprese le cancellazioni offline;
+   - configurazione: unita campo per campo, senza sovrascrivere scelte gia' fatte qui. */
 function mergeBlob(d){
+  var ops=(Array.isArray(d.outbox)?d.outbox:[]).concat(Array.isArray(d.failed)?d.failed:[]);
+  var deleted={}; ops.forEach(function(o){ if(o&&o.op==="del") deleted[o.coll+"/"+o.id]=1; });
+  var n={added:0,updated:0,removed:0};
   inBatch(function(){
     ["items","projects","areas","archive"].forEach(function(k){
       cleanList(k,clone(d[k]||[])).forEach(function(o){
-        if(!state[k].some(function(x){return x.id===o.id;})) putDoc(k,o);
+        if(deleted[k+"/"+o.id]) return;                       // cancellato offline: non lo si resuscita
+        var cur=state[k].find(function(x){return x.id===o.id;});
+        if(!cur){ putDoc(k,o); n.added++; return; }
+        if((o.updatedAt||0)>(cur.updatedAt||0)){ putDoc(k,o); n.updated++; }   // la modifica offline piu' recente vince
       });
     });
+    // scritture rimaste in coda nella vecchia copia (mai arrivate al server)
+    ops.forEach(function(o){
+      if(!o||o.op!=="set"||!o.o) return;
+      if(o.coll==="meta") return;
+      var cur=(state[o.coll]||[]).find(function(x){return x.id===o.id;});
+      if(!cur||(o.o.updatedAt||0)>(cur.updatedAt||0)){ putDoc(o.coll,sanitize(o.coll,clone(o.o))); n.updated++; }
+    });
+    // cancellazioni fatte offline e mai sincronizzate
+    Object.keys(deleted).forEach(function(k){
+      var parts=k.split("/"), coll=parts[0], id=parts[1];
+      if((state[coll]||[]).some(function(x){return x.id===id;})){ delDoc(coll,id); n.removed++; }
+    });
+    // configurazione: solo cio' che qui non e' stato ancora deciso
+    var oldCfg=sanitizeConfig(d.config||null), cur=state.config, ch=false;
+    oldCfg.contexts.forEach(function(c){ if(cur.contexts.indexOf(c)<0){ cur.contexts.push(c); ch=true; } });
+    if((cur.defCtx===null||cur.defCtx===undefined)&&oldCfg.defCtx!==null){ cur.defCtx=oldCfg.defCtx; ch=true; }
+    if(!cur.nextOrder.length&&oldCfg.nextOrder.length){ cur.nextOrder=oldCfg.nextOrder; ch=true; }
+    ["h30","h40","h50"].forEach(function(h){ if(!cur.horizons[h]&&oldCfg.horizons[h]){ cur.horizons[h]=oldCfg.horizons[h]; ch=true; } });
+    if(!cur.review.last&&oldCfg.review.last){ cur.review=oldCfg.review; ch=true; }
+    if(ch) putConfig();
   });
+  return n;
 }
 /* Dallo spazio senza accesso verso un account: solo su scelta esplicita. */
 function offerAnonTransfer(){
@@ -746,20 +803,28 @@ function offerAnonTransfer(){
   try{ if(localStorage.getItem("flowgtd_anonMoved_"+SPACE)==="1") return; }catch(e){}
   ask("Su questo dispositivo ci sono "+plural(d.items.length,"elemento","elementi")+
       " creati senza aver effettuato l\u2019accesso.\n\nVuoi portarli in "+(SPACE_LABEL||"questo account")+"?",
-    function(){ try{ localStorage.setItem("flowgtd_anonMoved_"+SPACE,"1"); }catch(e){} mergeBlob(d); toast("Dati trasferiti"); },
+    function(){ try{ localStorage.setItem("flowgtd_anonMoved_"+SPACE,"1"); }catch(e){} var n=mergeBlob(d);
+      toast("Trasferiti: "+n.added+" aggiunti, "+n.updated+" aggiornati"); },
     function(){ try{ localStorage.setItem("flowgtd_anonMoved_"+SPACE,"1"); }catch(e){} });
 }
 
 async function initStore(){
   CAN_SYNC=(typeof claude!=="undefined"&&!!claude.use);
-  try{ SPACE=localStorage.getItem(LAST_SPACE)||"anon"; }catch(e){}
-  BOOT_LOCAL=readLocal(); loadLocal(); render();       // l'app e' usabile subito, anche offline
-  if(!CAN_SYNC){ LOCAL=true; READY=true; renderSync(); maybeArchive(false); setTimeout(offerLegacy,300); return; }
+  if(!CAN_SYNC){                                     // file autonomo: un solo spazio, nessuna identita' da verificare
+    SPACE="anon"; IDENT=true; BOOT_LOCAL=readLocal(); loadLocal(); render();
+    LOCAL=true; READY=true; renderSync(); maybeArchive(false); setTimeout(offerLegacy,300); return;
+  }
+  render();                                          // in attesa dell'identita': nessun dato di nessun account
   var c=null;
   try{ c=await claude.use("db"); }catch(e){ LOG.push("use(db): "+((e&&e.message)||e)); c=null; }
-  var sid=(c&&c.spaceId)?String(c.spaceId):"anon";
-  if(sid!==SPACE) switchSpace(sid,(c&&c.spaceLabel)||"");
-  else { SPACE_LABEL=(c&&c.spaceLabel)||""; try{ localStorage.setItem(LAST_SPACE,SPACE); }catch(e){} }
+  if(c&&c.unresolved){                               // sessione non verificabile: non si apre lo spazio di nessuno
+    IDENT_FAIL=true; SPACE="anon"; LOCAL=true; READY=true; DB=null;
+    SYNC.detached=true; SYNC.err="accesso non verificato";
+    loadLocal(); IDENT=true; applyPreOps(); saveLocal(); render();
+    toast("Non ho potuto verificare l\u2019accesso: i dati del tuo account restano sul dispositivo, riprova collegandoti","err");
+    return;
+  }
+  switchSpace((c&&c.spaceId)?String(c.spaceId):"anon",(c&&c.spaceLabel)||"");
   DB=c; READY=true;
   if(!DB){ LOCAL=true; SYNC.detached=true; SYNC.err="spazio sincronizzato non disponibile"; render(); maybeArchive(false); setTimeout(offerLegacy,300); return; }
   subscribeAll(); scheduleFlush(0);
@@ -820,7 +885,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="41 — 26 set 2026";
+var BUILD="42 — 27 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -954,13 +1019,20 @@ function normalizeDates(c){
   var had=!!(c.date||c.start||(c.rec&&c.rec.unit));
   c.date=""; c.start=""; c.rec=null; return had;
 }
-function readRec(c){
+/* orig = l'azione com'era prima della modifica: serve a non ricalcolare l'ancora
+   del mese quando stai cambiando solo il titolo o le note. */
+function readRec(c,orig){
   var u=val("e_unit");
   if(!u){ c.rec=null; return; }
   var n=Math.max(1,Math.min(99,parseInt(val("e_every"),10)||1));
-  c.rec={unit:u,every:n,mode:val("e_recmode")||"after"};
+  var mode=val("e_recmode")||"after";
+  c.rec={unit:u,every:n,mode:mode};
   if(!c.date) c.date=ymd(today());           // un'azione ricorrente ha sempre una data
-  if(u==="m") c.rec.anchor=parseD(c.date).getDate();
+  if(u==="m"){
+    var old=orig&&orig.rec;
+    var same=old&&old.unit==="m"&&old.mode===mode&&(old.every||1)===n&&str(orig.date)===str(c.date);
+    c.rec.anchor=(same&&isNum(old.anchor))?old.anchor:parseD(c.date).getDate();
+  }
 }
 
 /* ---- azioni di progetto: nascono sempre "da smistare"; lista, contesto, tempo
@@ -2025,7 +2097,8 @@ function mSettings(){
    })()+
    "<b>Modalità:</b> "+(DB&&!SYNC.detached?"spazio sincronizzato (segue i dispositivi)":(CAN_SYNC?"sincronizzazione sospesa — copia su questo dispositivo":"solo questo dispositivo"))+"<br>"+
    "<b>Stato:</b> "+esc(syncState().t)+"<br>"+
-   "<b>Spazio dati:</b> "+esc(SPACE==="anon"?"senza accesso (locale)":(SPACE_LABEL||SPACE))+"<br>"+
+   "<b>Spazio dati:</b> "+esc(IDENT_FAIL?"accesso non verificato: nessuno spazio aperto"
+      :(SPACE==="anon"?"senza accesso (locale)":(SPACE_LABEL||SPACE)))+"<br>"+
    "<b>Da sincronizzare:</b> "+OUTBOX.length+(FAILED.length?" · <b style=\"color:var(--danger)\">ferme: "+FAILED.length+"</b>":"")+"<br>"+
    "<b>Ultima conferma dal server:</b> "+(SYNC.lastOk?new Date(SYNC.lastOk).toLocaleTimeString("it-IT"):"—")+"<br>"+
    (SYNC.code?"<b>Ultimo problema:</b> "+esc(SYNC.code)+" — "+esc(String(SYNC.err||"").slice(0,120))+"<br>":"")+
@@ -2126,9 +2199,16 @@ document.addEventListener("click",function(ev){
   if(a==="newprj"){open({t:"newprj"});return;}
   if(a==="toggle"){var it=state.items.find(function(x){return x.id===id;});if(it)completeItem(it);return;}
   if(a==="restore"){ var ri=state.items.find(function(x){return x.id===id;}); if(!ri)return;
-    var rc=clone(ri), back=LISTS[rc.prevList]&&rc.prevList!=="trash"?rc.prevList:"inbox";
-    rc.list=back; delete rc.prevList;
-    putDoc("items",rc); toast(back==="inbox"?"Ripristinato in arrivo, da chiarire":"Ripristinato in "+LISTS[back]); return; }
+    var rc=clone(ri), wasDone=rc.trashFrom==="done"||!!rc.doneAt;
+    // torna sempre in arrivo, ripulito dai segni del completamento
+    rc.list="inbox"; delete rc.trashFrom; delete rc.prevList; delete rc.doneAt;
+    var heir=rc.recNext?state.items.find(function(x){return x.id===rc.recNext&&x.list!=="trash";}):null;
+    delete rc.recNext;
+    if(heir&&rc.rec) rc.rec=null;     // l'occorrenza successiva esiste gia': niente doppioni
+    putDoc("items",rc);
+    toast(wasDone?(heir?"Ripristinato in arrivo: era completata, la ricorrenza prosegue sull\u2019altra occorrenza"
+                       :"Ripristinato in arrivo: era completata, ora \u00e8 da chiarire")
+                 :"Ripristinato in arrivo, da chiarire"); return; }
   if(a==="focus"){ var fi=state.items.find(function(x){return x.id===id;}); if(!fi)return;
     var fc=clone(fi); fc.focus=!fc.focus; if(!fc.focus) delete fc.focus; putDoc("items",fc); focusWarn(!!fc.focus); return; }
   if(a==="clearfocus"){
@@ -2232,10 +2312,10 @@ document.addEventListener("click",function(ev){
       delete c3.focus; delete c3.prevList;
     } else if(i3.list==="done"){
       c3.list="done"; c3.context=val("e_ctx"); c3.date=val("e_date"); c3.start=c3.date?val("e_start"):"";
-      readRec(c3);                       // stato, doneAt e legame con la ricorrenza restano intatti
+      readRec(c3,i3);                    // stato, doneAt e legame con la ricorrenza restano intatti
     } else {
       c3.list=val("e_list"); c3.context=val("e_ctx"); c3.date=val("e_date"); c3.start=c3.date?val("e_start"):"";
-      readRec(c3);
+      readRec(c3,i3);
     }
     if(state.draft&&i3.list!=="reference"){ c3.time=state.draft.time||null; c3.energy=state.draft.energy||null;
       if(state.draft.focus) c3.focus=true; else delete c3.focus; }
@@ -2258,7 +2338,7 @@ document.addEventListener("click",function(ev){
         delDoc("items",di.id); close(); toast("Eliminato definitivamente"); });
       return;
     }
-    var dc=clone(di); if(dc.list!=="done") dc.prevList=dc.list; dc.list="trash";
+    var dc=clone(di); dc.trashFrom=dc.list; dc.list="trash";   // prevList resta al completamento
     putDoc("items",dc); close(); toast("Spostato nel cestino"); return;
   }
 
@@ -2381,7 +2461,7 @@ function val(id){var e=document.getElementById(id);return e?e.value.trim():"";}
 function stashEdit(c){
   c.title=val("e_title")||c.title; c.note=val("e_note"); c.list=val("e_list")||c.list;
   c.context=val("e_ctx"); c.projectId=val("e_prj"); c.date=val("e_date"); c.start=c.date?val("e_start"):"";
-  readRec(c); normalizeDates(c);
+  readRec(c,state.items.find(function(x){return x.id===c.id;})); normalizeDates(c);
 }
 async function doExport(){
   var data=JSON.stringify({schema:2,items:state.items,projects:state.projects,areas:state.areas,archive:state.archive,config:state.config},null,2);
