@@ -854,7 +854,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="43 — 27 set 2026";
+var BUILD="44 — 28 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1240,6 +1240,7 @@ function inboxItems(){
 function vInbox(){
   var list=inboxItems(), pure=list.filter(function(i){return i.list==="inbox";}), planned=list.filter(function(i){return i.list==="project";});
   var h='<div class="title">In arrivo</div><p class="lede">'+(list.length?plural(list.length,"elemento da decidere","elementi da decidere"):"Inbox a zero")+"</p>";
+  h+='<p class="hint" style="margin-top:-6px">Tocca una voce per chiarirla, la matita per correggerla e rimandare la decisione.</p>';
   h+='<div class="quote"><b>Chiarire non vuol dire fare.</b> Per ogni elemento decidi cos\'è e qual è la prossima azione. Una decisione presa una volta non ti ruberà più energia.</div>';
   if(!list.length){
     h+='<div class="empty"><div class="big">Mente come l\'acqua</div>Non c\'è niente in sospeso da decidere.<br>Cattura qui sopra qualsiasi cosa ti venga in mente.</div>';
@@ -1249,11 +1250,12 @@ function vInbox(){
   h+='<button class="btn pri full" data-act="clarify" data-id="'+esc(list[0].id)+'" style="margin-bottom:6px">Chiarisci il primo elemento</button>';
   var row=function(i){
     var p=i.list==="project"&&i.projectId?prj(i.projectId):null;
-    return '<button class="item" data-act="clarify" data-id="'+esc(i.id)+'" style="width:100%"><div class="ibody">'+
+    return '<div class="item"><button class="ibody" data-act="clarify" data-id="'+esc(i.id)+'">'+
       '<div class="ititle">'+esc(i.title)+"</div>"+(i.note?'<div class="note">'+esc(i.note)+"</div>":"")+
       '<div class="meta">'+(p?'<span class="tag prj">'+(p.focus&&p.status==="active"?"\u2605 ":"")+esc(p.title)+'</span><span class="tag plan">da smistare</span>'
-                           :'<span class="tag">da chiarire</span>')+"</div></div>"+
-      '<span style="color:var(--faint);align-self:center">'+ICO.chev+"</span></button>";
+                           :'<span class="tag">da chiarire</span>')+"</div></button>"+
+      '<button class="icon-btn" data-act="edit" data-id="'+esc(i.id)+'" aria-label="Correggi senza chiarire" style="align-self:center">'+ICO.pen+"</button>"+
+      '<span style="color:var(--faint);align-self:center" aria-hidden="true">'+ICO.chev+"</span></div>";
   };
   if(pure.length) h+='<div class="eyebrow">Catturati ('+pure.length+")</div>"+pure.map(row).join("");
   if(planned.length) h+='<div class="eyebrow">Da smistare nei progetti ('+planned.length+')</div>'+
@@ -1313,9 +1315,19 @@ function vEngage(){
     h+='<div class="flabel">Progetto</div><select class="t" id="f_prj" style="margin-bottom:10px">'+body2+"</select>";
   }
   var fo=fl.filter(inFocus), rest=fl.filter(function(i){return !inFocus(i);});
-  var rowS=function(i,n){return itemRow(i,{star:true,grip:n>1});};
-  var nextZone=function(arr){ return '<div class="dragzone" data-zone="next">'+
-    arr.map(function(i){return rowS(i,arr.length);}).join("")+"</div>"; };
+  /* Prima le azioni con una scadenza, in ordine di data: l'ordine manuale vale
+     per le altre, che infatti sono le uniche con la maniglia. */
+  var byDeadline=function(arr){
+    var dated=arr.filter(function(i){return !!i.date;}).sort(byWhen);
+    var free=sortNext(arr.filter(function(i){return !i.date;}));
+    return {dated:dated,free:free};
+  };
+  var nextZone=function(arr){
+    var g=byDeadline(arr);
+    return '<div class="dragzone" data-zone="next">'+
+      g.dated.map(function(i){return itemRow(i,{star:true});}).join("")+
+      g.free.map(function(i){return itemRow(i,{star:true,grip:g.free.length>1});}).join("")+"</div>";
+  };
   if(fo.length) h+='<div class="eyebrow" style="color:var(--amber);display:flex;justify-content:space-between;align-items:center">'+
     "<span>\u2605 In primo piano ("+fo.length+')</span><button class="linkbtn" data-act="clearfocus">Azzera</button></div>'+nextZone(fo);
   h+='<div class="eyebrow">'+(fo.length?"Altre prossime azioni":"Prossime azioni")+" ("+rest.length+")</div>";
@@ -1706,6 +1718,9 @@ function mWizard(){
     body=crumbs+'<div class="qhead">Quando?</div>'+
       '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb">Data</div><input class="t" type="date" id="w_date" value="'+esc(w.d.date||ymd(today()))+'"></label>'+
       '<label class="f" style="flex:1"><div class="lb">Ora (facoltativa)</div><input class="t" type="time" id="w_start" value="'+esc(w.d.start||"")+'"></label></div>'+
+      (state.config.contexts.length?'<label class="f"><div class="lb">Contesto (facoltativo)</div><select class="t" id="w_ccx"><option value="">—</option>'+
+        state.config.contexts.map(function(c){return "<option"+(w.d.context===c?" selected":"")+">"+esc(c)+"</option>";}).join("")+
+        '</select></label><p class="hint" style="margin-top:-8px">Dove o con cosa lo farai: utile anche per un appuntamento.</p>':"")+
       '<button class="btn pri full" data-act="w_saveCal">Metti in calendario</button>';
   }
   else if(w.step==="organize"){
@@ -1774,6 +1789,8 @@ function mAdd(){
        lb("Note",'<textarea class="t" id="a_note"></textarea>')+
        '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb">Data</div><input class="t" type="date" id="a_date" value="'+esc(ymd(today()))+'"></label>'+
        '<label class="f" style="flex:1"><div class="lb">Ora</div><input class="t" type="time" id="a_start"></label></div>'+
+       (state.config.contexts.length?lb("Contesto (facoltativo)",'<select class="t" id="a_ctx"><option value="">—</option>'+
+         state.config.contexts.map(function(c){return "<option"+(c===defaultCtx()?" selected":"")+">"+esc(c)+"</option>";}).join("")+"</select>"):"")+
        '<div class="flabel">Durata</div><div class="chips">'+TIMES.map(function(t){
          return '<button class="chip'+(a.time===t.v?" on":"")+'" data-act="a_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>"+
        '<p class="hint">Qui va solo ci\u00f2 che <b>deve</b> accadere in quel giorno.</p>';
@@ -2182,7 +2199,7 @@ document.addEventListener("click",function(ev){
     var o={id:uid(),title:ti,note:val("a_note"),list:L,createdAt:Date.now()};
     if(L==="next"){ o.projectId=val("a_prj"); o.areaId=val("a_area"); o.context=val("a_ctx"); o.time=state.add.time||null; o.energy=state.add.energy||null; }
     if(state.modal.pid) o.projectId=state.modal.pid;
-    if(L==="calendar"){ o.time=state.add.time||null; }
+    if(L==="calendar"){ o.time=state.add.time||null; o.context=val("a_ctx"); }
     o.date=val("a_date"); o.start=o.date?val("a_start"):"";
     sanitize("items",o); normalizeDates(o);
     var back=state.modal.pid?{t:"prj",id:state.modal.pid}:null;
@@ -2281,7 +2298,7 @@ document.addEventListener("click",function(ev){
   if(a==="w_later"){wpath("un giorno");wizFinish({list:"someday"});return;}
   if(a==="w_saveWait"){wizFinish({list:"waiting",date:val("w_wdate")});return;}
   if(a==="w_anytime"){wpath("quando posso");wgo("organize");return;}
-  if(a==="w_saveCal"){var dd=val("w_date"); if(!dd){toast("Serve una data");return;} wizFinish({list:"calendar",date:dd,start:dd?val("w_start"):""});return;}
+  if(a==="w_saveCal"){var dd=val("w_date"); if(!dd){toast("Serve una data");return;} wizFinish({list:"calendar",date:dd,start:val("w_start"),context:val("w_ccx")});return;}
   if(a==="w_ctx"){w.d.context=v;renderModal();return;}
   if(a==="w_time"){w.d.time=+v;renderModal();return;}
   if(a==="w_en"){w.d.energy=+v;renderModal();return;}
