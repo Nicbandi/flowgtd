@@ -886,7 +886,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="44 — 28 set 2026";
+var BUILD="45 — 28 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1757,8 +1757,11 @@ function mWizard(){
   }
   else if(w.step==="organize"){
     body=crumbs+'<div class="qhead">Dove e come la farai?</div><div class="qhelp">Contesto, tempo ed energia sono ciò che ti permetterà di sceglierla al momento giusto.</div>'+
-      '<div class="flabel">Contesto</div><div class="chips">'+state.config.contexts.map(function(c){
+      '<div class="flabel">Contesto</div><div class="chips">'+
+        '<button class="chip '+(w.d.context?"":"on")+'" data-act="w_ctx" data-v="">\u2014 nessuno \u2014</button>'+
+        state.config.contexts.map(function(c){
         return '<button class="chip '+(w.d.context===c?"on":"")+'" data-act="w_ctx" data-v="'+esc(c)+'">'+esc(c)+"</button>";}).join("")+"</div>"+
+      '<p class="hint" style="margin-top:-6px">Non tutte le azioni hanno bisogno di un contesto.</p>'+
       '<div class="flabel">Tempo necessario</div><div class="chips">'+TIMES.map(function(t){
         return '<button class="chip '+(w.d.time===t.v?"on":"")+'" data-act="w_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>"+
       '<div class="flabel">Energia richiesta</div><div class="chips">'+ENERGY.map(function(e){
