@@ -886,7 +886,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="45 — 28 set 2026";
+var BUILD="46 — 29 set 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -919,6 +919,56 @@ function dlgRestore(){
   var sel='[data-act="'+ce(o.act)+'"]'+(o.id?'[data-id="'+ce(o.id)+'"]':"")+(o.v?'[data-v="'+ce(o.v)+'"]':"");
   try{ var el=document.querySelector(sel); if(el) el.focus({preventScroll:true}); }catch(e){}
 }
+/* ---- rinominare un contesto: il nome nuovo vale ovunque ---- */
+function renameCtxDialog(old){
+  var d=document.getElementById("dialog");
+  d.innerHTML='<div class="scrim" style="align-items:center"><div class="sheet" data-stop="1" role="dialog" aria-modal="true" aria-label="Rinomina contesto" '+
+    'style="border-radius:18px;max-width:420px;margin:16px;width:auto"><div class="sbody">'+
+    '<div style="font-weight:600;margin-bottom:8px">Rinomina '+esc(old)+'</div>'+
+    '<input class="t" id="rn_ctx" value="'+esc(old)+'" autocomplete="off">'+
+    '<p class="hint" style="margin-top:8px">Il nome cambia anche in tutte le azioni che lo usano.</p></div>'+
+    '<div class="sfoot"><button class="btn" data-dlg="no">Annulla</button>'+
+    '<button class="btn pri" style="flex:1" data-dlg="yes">Rinomina</button></div></div></div>';
+  dlgOpen(d);
+  var inp=d.querySelector("#rn_ctx");
+  try{ inp.focus(); inp.select(); }catch(e){}
+  inp.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); d.querySelector('[data-dlg="yes"]').click(); } });
+  d.onclick=function(ev){
+    var b=ev.target.closest("[data-dlg]"); if(!b) return;
+    var yes=b.getAttribute("data-dlg")==="yes", v=inp.value;
+    d.innerHTML=""; d.onclick=null;
+    if(yes) renameCtx(old,v);
+    dlgRestore();
+  };
+}
+function renameCtx(old,raw){
+  var v=str(raw).trim();
+  if(!v){ toast("Serve un nome"); return; }
+  if(v[0]!=="@") v="@"+v;
+  if(v===old) return;
+  var merge=state.config.contexts.indexOf(v)>=0;
+  var users=state.items.filter(function(i){return i.context===old;});
+  var apply=function(){
+    inBatch(function(){
+      users.forEach(function(i){ var c=clone(i); c.context=v; putDoc("items",c); });
+      var ctx=state.config.contexts.slice(), k=ctx.indexOf(old);
+      if(merge) ctx.splice(k,1); else ctx[k]=v;           // stesso posto nell'elenco
+      state.config.contexts=ctx;
+      if(state.config.defCtx===old) state.config.defCtx=v;
+      if(state.f.ctx===old) state.f.ctx=v;
+      putConfig();
+    });
+    renderModal();
+    toast((merge?old+" unito a "+v:"Rinominato in "+v)+(users.length?" \u00b7 "+plural(users.length,"azione aggiornata","azioni aggiornate"):""));
+  };
+  if(merge){
+    ask(v+" esiste gi\u00e0.\n\nVuoi unire "+old+" a "+v+"? "+
+      (users.length?"Le "+plural(users.length,"azione","azioni")+" di "+old+" passeranno a "+v+".":"")+"", apply);
+    return;
+  }
+  apply();
+}
+
 /* dialogo con una o piu' scelte; con piu' di due opzioni i pulsanti si impilano */
 function choose(msg,opts){
   var d=document.getElementById("dialog"), stack=opts.length>2;
@@ -2124,6 +2174,7 @@ function mSettings(){
   // il nome non e' toccabile: si elimina solo dalla × , e con una conferma
   h+='<div class="mindgrid">'+state.config.contexts.map(function(c){
     return '<span class="mind" style="display:inline-flex;align-items:center;gap:6px">'+esc(c)+
+      '<button class="ctxdel" data-act="s_renctx" data-v="'+esc(c)+'" aria-label="Rinomina il contesto '+esc(c)+'">\u270e</button>'+
       '<button class="ctxdel" data-act="s_delctx" data-v="'+esc(c)+'" aria-label="Elimina il contesto '+esc(c)+'">\u00d7</button></span>';}).join("")+"</div>";
   h+='<form id="sf"><div style="display:flex;gap:7px;margin-top:6px"><input class="t" id="si" placeholder="@nuovo-contesto" style="flex:1"><button class="btn pri" type="submit">+</button></div></form>';
   h+='<label class="f" style="margin-top:12px"><div class="lb">Contesto proposto quando chiarisci</div>'+
@@ -2474,6 +2525,7 @@ document.addEventListener("click",function(ev){
   }
 
   /* impostazioni */
+  if(a==="s_renctx"){ renameCtxDialog(v); return; }
   if(a==="s_delctx"){
     var users=state.items.filter(function(i){return i.context===v&&i.list!=="trash"&&i.list!=="done";});
     var moveTo=function(target){ inBatch(function(){
