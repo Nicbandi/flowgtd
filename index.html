@@ -884,7 +884,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="47 — 19 ott 2026";
+var BUILD="48 — 19 ott 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1782,8 +1782,8 @@ function mWizard(){
   }
   else if(w.step==="schedule2"){
     body=crumbs+'<div class="qhead">Quando?</div>'+
-      '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb">Data</div><input class="t" type="date" id="w_date" value="'+esc(w.d.date||ymd(today()))+'"></label>'+
-      '<label class="f" style="flex:1"><div class="lb">Ora (facoltativa)</div><input class="t" type="time" id="w_start" value="'+esc(w.d.start||"")+'"></label></div>'+
+      '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb">Il giorno</div><input class="t" type="date" id="w_date" value="'+esc(w.d.date||ymd(today()))+'"></label>'+
+      '<div class="f" style="flex:1"><div class="lb">Alle (facoltativo)</div>'+timeField("w_start",w.d.start||"")+"</div></div>"+
       (state.config.contexts.length?'<label class="f"><div class="lb">Contesto (facoltativo)</div><select class="t" id="w_ccx"><option value="">—</option>'+
         state.config.contexts.map(function(c){return "<option"+(w.d.context===c?" selected":"")+">"+esc(c)+"</option>";}).join("")+
         '</select></label><p class="hint" style="margin-top:-8px">Dove o con cosa lo farai: utile anche per un appuntamento.</p>':"")+
@@ -1833,6 +1833,48 @@ var ADD={next:{t:"Nuova prossima azione",b:"Nuova prossima azione"},
 function addBtn(list){
   return '<button class="btn full" data-act="add" data-v="'+list+'" style="margin-bottom:14px">+ '+esc(ADD[list].b)+"</button>";
 }
+/* Ora scelta con due menu: ore e minuti a passi di 5. Il valore vero sta in un
+   campo nascosto con l'id originale, cosi' tutto il resto del codice non cambia.
+   Un'ora gia' salvata che non e' multipla di 5 resta selezionabile, non va persa. */
+function timeField(id,value){
+  var v=/^\d{2}:\d{2}$/.test(str(value))?value:"", h=v?v.slice(0,2):"", m=v?v.slice(3,5):"";
+  var hs='<option value="">—</option>', ms="";
+  for(var i=0;i<24;i++){ var hh=(i<10?"0":"")+i; hs+='<option'+(hh===h?" selected":"")+">"+hh+"</option>"; }
+  var mins=[]; for(var j=0;j<60;j+=5) mins.push((j<10?"0":"")+j);
+  if(m&&mins.indexOf(m)<0){ mins.push(m); mins.sort(); }
+  mins.forEach(function(mm){ ms+='<option'+(mm===(m||"00")?" selected":"")+">"+mm+"</option>"; });
+  return '<input type="hidden" id="'+id+'" value="'+esc(v)+'">'+
+    '<div style="display:flex;gap:4px;align-items:center">'+
+    '<select class="t" id="'+id+'_h" data-tf="'+id+'" aria-label="Ore" style="flex:1;padding-left:8px;padding-right:4px">'+hs+"</select>"+
+    '<span aria-hidden="true">:</span>'+
+    '<select class="t" id="'+id+'_m" data-tf="'+id+'" aria-label="Minuti" style="flex:1;padding-left:8px;padding-right:4px"'+(v?"":" disabled")+">"+ms+"</select></div>";
+}
+function syncTime(id){
+  var h=document.getElementById(id+"_h"), m=document.getElementById(id+"_m"), x=document.getElementById(id);
+  if(!h||!m||!x) return;
+  m.disabled=!h.value;
+  x.value=h.value?h.value+":"+(m.value||"00"):"";
+}
+/* cosa significa la data, a seconda della lista */
+function dateWords(list){
+  if(list==="next") return {d:"Entro il",t:"Entro le"};
+  if(list==="calendar") return {d:"Il giorno",t:"Alle"};
+  if(list==="waiting") return {d:"Da ricontrollare il",t:"Ora"};
+  if(list==="someday") return {d:"Da riconsiderare il",t:"Ora"};
+  return {d:"Data",t:"Ora"};
+}
+var TIME_HINT="Un\u2019ora precisa? Se deve accadere proprio allora \u00e8 un appuntamento: mettilo in Calendario.";
+/* il promemoria compare solo quando si mette un'ora su una prossima azione */
+function timeHint(pre){
+  var box=document.getElementById(pre+"_thint"); if(!box) return;
+  var list=pre==="e"?val("e_list"):(state.modal&&state.modal.list);
+  box.style.display=(list==="next"&&val(pre+"_start"))?"":"none";
+}
+function relabelDates(){
+  var w=dateWords(val("e_list")), d=document.getElementById("e_dlb"), t=document.getElementById("e_tlb");
+  if(d) d.textContent=w.d; if(t) t.textContent=w.t; timeHint("e");
+}
+
 function mAdd(){
   var L=state.modal.list, a=state.add||{}, act=state.projects.filter(function(p){return p.status!=="done";});
   var lb=function(k,inner){ return '<label class="f"><div class="lb">'+esc(k)+"</div>"+inner+"</label>"; };
@@ -1850,14 +1892,16 @@ function mAdd(){
          return '<button class="chip'+(a.time===t.v?" on":"")+'" data-act="a_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>"+
        '<div class="flabel">Energia</div><div class="chips">'+ENERGY.map(function(e){
          return '<button class="chip'+(a.energy===e.v?" on":"")+'" data-act="a_en" data-v="'+e.v+'">'+e.l+"</button>";}).join("")+"</div>"+
-       '<div style="display:flex;gap:8px;margin-top:12px"><label class="f" style="flex:1.4"><div class="lb">Scadenza vera (facoltativa)</div><input class="t" type="date" id="a_date"></label>'+
-       '<label class="f" style="flex:1"><div class="lb">Ora</div><input class="t" type="time" id="a_start"></label></div>'+
-       '<p class="hint" style="margin-top:-6px">Solo se esiste davvero una scadenza. Per gli appuntamenti usa il calendario.</p>';
+       '<div style="display:flex;gap:8px;margin-top:12px"><label class="f" style="flex:1.4"><div class="lb">Entro il (facoltativo)</div><input class="t" type="date" id="a_date"></label>'+
+       '<div class="f" style="flex:1"><div class="lb">Entro le</div>'+timeField("a_start","")+"</div></div>"+
+       '<div id="a_thint" class="quote" style="display:none;margin-top:-4px">'+TIME_HINT+
+         '<div style="margin-top:8px"><button class="btn sm" data-act="a_tocal">Inseriscilo in Calendario</button></div></div>'+
+       '<p class="hint" style="margin-top:-6px">Solo se esiste davvero una scadenza: la puoi fare anche prima.</p>';
   } else if(L==="calendar"){
     h+=lb("Impegno",'<input class="t" id="a_title" placeholder="Es. Dentista">')+
        lb("Note",'<textarea class="t" id="a_note"></textarea>')+
-       '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb">Data</div><input class="t" type="date" id="a_date" value="'+esc(ymd(today()))+'"></label>'+
-       '<label class="f" style="flex:1"><div class="lb">Ora</div><input class="t" type="time" id="a_start"></label></div>'+
+       '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb">Il giorno</div><input class="t" type="date" id="a_date" value="'+esc(ymd(today()))+'"></label>'+
+       '<div class="f" style="flex:1"><div class="lb">Alle (facoltativo)</div>'+timeField("a_start","")+"</div></div>"+
        (state.config.contexts.length?lb("Contesto (facoltativo)",'<select class="t" id="a_ctx"><option value="">—</option>'+
          state.config.contexts.map(function(c){return "<option"+(c===defaultCtx()?" selected":"")+">"+esc(c)+"</option>";}).join("")+"</select>"):"")+
        '<div class="flabel">Durata</div><div class="chips">'+TIMES.map(function(t){
@@ -2027,8 +2071,10 @@ function mEdit(){
    (state.areas.length?'<label class="f"><div class="lb">Area di responsabilit\u00e0</div><select class="t" id="e_area"><option value="">—</option>'+
      areaOptions(i.areaId)+'</select></label><p class="hint" style="margin-top:-8px">'+
      (i.projectId?"L\u2019azione sta in un progetto: vale l\u2019area del progetto.":"Per le azioni che non stanno in un progetto.")+"</p>":"")+
-   '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb">Data</div><input class="t" type="date" id="e_date" value="'+esc(i.date||"")+'"></label>'+
-   '<label class="f" style="flex:1"><div class="lb">Ora di inizio</div><input class="t" type="time" id="e_start" value="'+esc(i.start||"")+'"></label></div>'+
+   '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb" id="e_dlb">'+dateWords(i.list).d+'</div><input class="t" type="date" id="e_date" value="'+esc(i.date||"")+'"></label>'+
+   '<div class="f" style="flex:1"><div class="lb" id="e_tlb">'+dateWords(i.list).t+"</div>"+timeField("e_start",i.start||"")+"</div></div>"+
+   '<div id="e_thint" class="quote" style="'+(i.list==="next"&&i.start?"":"display:none;")+'margin-top:-4px">'+TIME_HINT+
+     (done?"":'<div style="margin-top:8px"><button class="btn sm" data-act="e_tocal">Sposta in Calendario</button></div>')+"</div>"+
    (function(){ var r=i.rec||{}, md=r.mode||(i.list==="calendar"?"fixed":"after");
      return '<div style="display:flex;gap:8px"><label class="f" style="flex:0 0 76px"><div class="lb">Ogni</div>'+
        '<input class="t" type="number" min="1" max="99" inputmode="numeric" id="e_every" value="'+esc(r.every||1)+'"></label>'+
@@ -2216,6 +2262,10 @@ document.getElementById("capf").addEventListener("submit",function(e){
 });
 
 document.addEventListener("change",function(e){
+  if(e.target&&e.target.getAttribute&&e.target.getAttribute("data-tf")){
+    var tf=e.target.getAttribute("data-tf"); syncTime(tf); timeHint(tf.split("_")[0]); return;
+  }
+  if(e.target&&e.target.id==="e_list"){ relabelDates(); return; }
   if(e.target&&e.target.id==="f_prj"){ state.f.prj=e.target.value; render(); return; }
   if(e.target&&e.target.id==="s_defctx"){ state.config.defCtx=e.target.value; putConfig(); toast(e.target.value?"Contesto proposto: "+e.target.value:"Nessun contesto proposto"); }
 });
@@ -2260,6 +2310,22 @@ document.addEventListener("click",function(ev){
   if(a==="clarify"){startWizard(id,t.getAttribute("data-from")||null);return;}
   if(a==="view"){open({t:"view",id:id});return;}
   if(a==="add"){ state.add={time:null,energy:null}; open({t:"add",list:v,pid:id||""}); return; }
+  if(a==="e_tocal"){
+    var el=document.getElementById("e_list"); if(!el) return;
+    el.value="calendar"; relabelDates();
+    toast("Sar\u00e0 un appuntamento in Calendario: premi Salva per confermare"); return;
+  }
+  if(a==="a_tocal"){
+    var keep={t:val("a_title"),n:val("a_note"),d:val("a_date"),s:val("a_start"),c:val("a_ctx")};
+    var pidK=state.modal.pid||"";
+    state.add={time:state.add&&state.add.time||null,energy:null};
+    open({t:"add",list:"calendar",pid:pidK});
+    var put=function(id,v){ var x=document.getElementById(id); if(x&&v) x.value=v; };
+    put("a_title",keep.t); put("a_note",keep.n); put("a_date",keep.d||ymd(today())); put("a_ctx",keep.c);
+    if(keep.s){ put("a_start_h",keep.s.slice(0,2)); var mm=document.getElementById("a_start_m");
+      if(mm){ mm.disabled=false; mm.value=keep.s.slice(3,5); } syncTime("a_start"); }
+    toast("Spostato in Calendario: controlla e salva"); return;
+  }
   if(a==="a_time"){ state.add.time=state.add.time===+v?null:+v; renderModal(); return; }
   if(a==="a_en"){ state.add.energy=state.add.energy===+v?null:+v; renderModal(); return; }
   if(a==="a_save"){
