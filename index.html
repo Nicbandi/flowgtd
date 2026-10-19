@@ -228,8 +228,6 @@ input.t:focus,textarea.t:focus,select.t:focus{border-color:var(--accent);box-sha
 .crumb{font-size:10.5px;font-weight:600;padding:2.5px 8px;border-radius:99px;background:var(--line2);color:var(--muted)}
 
 /* ---------- timer ---------- */
-.timer{text-align:center;padding:10px 0 4px}
-.tnum{font-family:var(--serif);font-size:52px;letter-spacing:-.02em;line-height:1}
 
 /* ---------- review ---------- */
 .chk{display:flex;gap:11px;align-items:flex-start;background:var(--sheet);border:1px solid var(--line);
@@ -886,7 +884,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="46 — 29 set 2026";
+var BUILD="47 — 19 ott 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1717,14 +1715,13 @@ function startWizard(id,backPrj,fromStep){
 function wgo(s){var w=state.wiz;w.hist.push(w.step);w.step=s;renderModal();}
 function wback(){var w=state.wiz;
   if(!w||!w.hist.length){var b=w&&w.back;close();if(b)open(b);return;}
-  if(w.timerInt){clearInterval(w.timerInt);w.timerInt=null;}
   w.path.pop();w.step=w.hist.pop();renderModal();}
 function wpath(l){state.wiz.path.push(l);}
 
 function mWizard(){
   var w=state.wiz; if(!w)return"";
-  var steps=["actionable","outcome","next","twomin","schedule","organize"];
-  var alias={nonaction:"actionable",newprj:"outcome",linkprj:"outcome",timer:"twomin",schedule2:"schedule",waitdate:"schedule"};
+  var steps=["actionable","outcome","next","schedule","organize"];
+  var alias={nonaction:"actionable",newprj:"outcome",linkprj:"outcome",schedule2:"schedule",waitdate:"schedule"};
   var si=Math.max(0,steps.indexOf(alias[w.step]||w.step));
   var bar='<div class="steps">'+steps.map(function(s,i){return '<i class="'+(i<=si?"on":"")+'"></i>';}).join("")+"</div>";
   var subj='<div class="subject"><div class="k">Elemento</div>'+esc(w.d.title)+"</div>";
@@ -1770,19 +1767,6 @@ function mWizard(){
       '<label class="f"><div class="lb">Note (facoltative)</div><textarea class="t" id="w_note" placeholder="Numero di telefono, link, dettagli…">'+esc(w.d.note)+"</textarea></label>"+
       '<button class="btn pri full" data-act="w_nextok">Continua</button>'+
       "";
-  }
-  else if(w.step==="twomin"){
-    body=crumbs+'<div class="qhead">Si fa in meno di 10 minuti?</div><div class="qhelp">Se sì, <b>falla adesso</b>: archiviarla, organizzarla e ritrovarla costerebbe più che farla.</div>'+
-      opt("w_do","Sì — la faccio ora","Parte un timer di dieci minuti.")+
-      opt("w_notwo","No, ci vuole di più","Va organizzata.");
-  }
-  else if(w.step==="timer"){
-    var m=Math.floor(w.d.left/60),s=w.d.left%60;
-    body='<div class="qhead" style="text-align:center">Fallo adesso</div>'+
-      '<div class="timer"><div class="tnum">'+m+":"+String(s).padStart(2,"0")+"</div></div>"+
-      '<p class="qhelp" style="text-align:center;margin-top:10px">'+esc(w.d.title)+"</p>"+
-      '<button class="btn pri full" data-act="w_donefast" style="margin-top:8px">Fatto</button>'+
-      '<button class="btn full" data-act="w_notwo" style="margin-top:8px">Ci vuole di più — organizzala</button>';
   }
   else if(w.step==="schedule"){
     body=crumbs+'<div class="qhead">Deve accadere in un giorno preciso?</div><div class="qhelp">Sul calendario va solo il <b>terreno rigido</b>: appuntamenti e scadenze reali. Tutto il resto vive nelle prossime azioni.</div>'+
@@ -2365,20 +2349,8 @@ document.addEventListener("click",function(ev){
     var n=document.getElementById("w_next"), nt=document.getElementById("w_note");
     if(n&&n.value.trim())w.d.title=n.value.trim();
     if(nt)w.d.note=nt.value;
-    wgo("twomin");return;
+    wgo("schedule");return;
   }
-  if(a==="w_do"){
-    wpath("10 minuti"); w.d.left=600; wgo("timer");
-    w.timerInt=setInterval(function(){
-      if(!state.wiz){clearInterval(w.timerInt);return;}
-      w.d.left--; if(w.d.left<=0){clearInterval(w.timerInt);w.timerInt=null;w.d.left=0;}
-      if(state.wiz&&state.wiz.step==="timer")renderModal();
-    },1000);
-    return;
-  }
-  if(a==="w_donefast"){ if(w.timerInt)clearInterval(w.timerInt);
-    wizFinish({list:"done",prevList:"next",doneAt:Date.now()}); toast("Fatta subito."); return;}
-  if(a==="w_notwo"){ if(w.timerInt){clearInterval(w.timerInt);w.timerInt=null;} wpath("oltre 10 min"); wgo("schedule");return;}
   if(a==="w_cal"){wpath("terreno rigido");wgo("schedule2");return;}
   if(a==="w_wait"){wpath("in attesa");wgo("waitdate");return;}
   if(a==="w_later"){wpath("un giorno");wizFinish({list:"someday"});return;}
@@ -2468,8 +2440,8 @@ document.addEventListener("click",function(ev){
     var t5=val("nf_next"); if(!t5){toast("Scrivi la prossima azione");return;}
     var pid5=state.modal.id, nid=uid();
     putDoc("items",{id:nid,title:t5,list:"project",projectId:pid5,createdAt:Date.now()});
-    // e' gia' la prossima azione: si parte dalla regola dei 10 minuti, poi data, contesto, tempo ed energia
-    startWizard(nid,pid5,"twomin"); return;
+    // e' gia' la prossima azione: si parte dalla data, poi contesto, tempo ed energia
+    startWizard(nid,pid5,"schedule"); return;
   }
   if(a==="nf_done"){
     var p6=prj(state.modal.id); if(!p6){close();return;}
