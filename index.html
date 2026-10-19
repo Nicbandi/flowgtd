@@ -884,7 +884,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="48 — 19 ott 2026";
+var BUILD="49 — 19 ott 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1070,11 +1070,12 @@ function normalizeDates(c){
 }
 /* orig = l'azione com'era prima della modifica: serve a non ricalcolare l'ancora
    del mese quando stai cambiando solo il titolo o le note. */
-function readRec(c,orig){
-  var u=val("e_unit");
+function readRec(c,orig,pre){
+  pre=pre||"e";
+  var u=val(pre+"_unit");
   if(!u){ c.rec=null; return; }
-  var n=Math.max(1,Math.min(99,parseInt(val("e_every"),10)||1));
-  var mode=val("e_recmode")||"after";
+  var n=Math.max(1,Math.min(99,parseInt(val(pre+"_every"),10)||1));
+  var mode=val(pre+"_recmode")||"after";
   c.rec={unit:u,every:n,mode:mode};
   if(!c.date) c.date=ymd(today());           // un'azione ricorrente ha sempre una data
   if(u==="m"){
@@ -1855,6 +1856,38 @@ function syncTime(id){
   m.disabled=!h.value;
   x.value=h.value?h.value+":"+(m.value||"00"):"";
 }
+/* Quali campi hanno senso per ogni lista. Vale sia per l'inserimento sia per la
+   modifica, cosi' non esiste un campo che si puo' dare solo "dopo".
+   Energia e primo piano servono a scegliere tra prossime azioni: un appuntamento
+   non si sceglie, accade. */
+var FIELDS={
+  next:    ["ctx","prj","area","date","rec","dur","en","focus"],
+  calendar:["ctx","prj","area","date","rec","dur"],
+  waiting: ["prj","area","date"],
+  someday: ["prj","area","date"],
+  project: ["prj"],
+  inbox:[], trash:[],
+  done:    ["ctx","prj","area","date","rec","dur","en","focus"]
+};
+function hasF(list,f){ return (FIELDS[list]||[]).indexOf(f)>=0; }
+function fg(list,f,html){ return '<div data-fg="'+f+'"'+(hasF(list,f)?"":' style="display:none"')+">"+html+"</div>"; }
+function applyFields(list){
+  [].forEach.call(document.querySelectorAll("#modal [data-fg]"),function(el){
+    el.style.display=hasF(list,el.getAttribute("data-fg"))?"":"none"; });
+}
+/* ricorrenza: stesso blocco in inserimento e in modifica */
+function recFields(pre,r,list){
+  r=r||{}; var md=r.mode||(list==="calendar"?"fixed":"after");
+  return '<div style="display:flex;gap:8px"><label class="f" style="flex:0 0 76px"><div class="lb">Ogni</div>'+
+    '<input class="t" type="number" min="1" max="99" inputmode="numeric" id="'+pre+'_every" value="'+esc(r.every||1)+'"></label>'+
+    '<label class="f" style="flex:1"><div class="lb">Ripetizione</div><select class="t" id="'+pre+'_unit">'+
+    [["","Non si ripete"],["d","giorni"],["w","settimane"],["m","mesi"]].map(function(o){
+      return '<option value="'+o[0]+'"'+((r.unit||"")===o[0]?" selected":"")+">"+o[1]+"</option>";}).join("")+"</select></label></div>"+
+    '<label class="f"><div class="lb">La prossima si calcola</div><select class="t" id="'+pre+'_recmode">'+
+    [["fixed","A calendario fisso (es. ogni luned\u00ec)"],["after","Dal completamento (es. 7 giorni dopo averla fatta)"]].map(function(o){
+      return '<option value="'+o[0]+'"'+(md===o[0]?" selected":"")+">"+o[1]+"</option>";}).join("")+"</select></label>";
+}
+
 /* cosa significa la data, a seconda della lista */
 function dateWords(list){
   if(list==="next") return {d:"Entro il",t:"Entro le"};
@@ -1872,55 +1905,48 @@ function timeHint(pre){
 }
 function relabelDates(){
   var w=dateWords(val("e_list")), d=document.getElementById("e_dlb"), t=document.getElementById("e_tlb");
-  if(d) d.textContent=w.d; if(t) t.textContent=w.t; timeHint("e");
+  if(d) d.textContent=w.d; if(t) t.textContent=w.t; timeHint("e"); applyFields(val("e_list"));
 }
 
 function mAdd(){
   var L=state.modal.list, a=state.add||{}, act=state.projects.filter(function(p){return p.status!=="done";});
   var lb=function(k,inner){ return '<label class="f"><div class="lb">'+esc(k)+"</div>"+inner+"</label>"; };
   var h=sheetHead(state.modal.pid&&L==="reference"?"Materiale del progetto":ADD[L].t)+'<div class="sbody">';
-  if(L==="next"){
-    h+=lb("Azione",'<input class="t" id="a_title" placeholder="Es. Chiamare la palestra">')+
-       '<p class="hint" style="margin-top:-8px">Scrivila come un\u2019azione concreta e visibile: \u00abChiamare la palestra\u00bb, non \u00abPalestra\u00bb.</p>'+
-       lb("Note",'<textarea class="t" id="a_note"></textarea>')+
-       lb("Progetto",'<select class="t" id="a_prj"><option value="">— azione singola —</option>'+
-         act.map(function(p){return '<option value="'+esc(p.id)+'">'+esc(p.title)+"</option>";}).join("")+"</select>")+
-       (state.areas.length?lb("Area di responsabilit\u00e0",'<select class="t" id="a_area"><option value="">—</option>'+areaOptions("")+"</select>"):"")+
-       lb("Contesto",'<select class="t" id="a_ctx"><option value="">—</option>'+
-         state.config.contexts.map(function(c){return "<option"+(c===defaultCtx()?" selected":"")+">"+esc(c)+"</option>";}).join("")+"</select>")+
-       '<div class="flabel">Tempo</div><div class="chips">'+TIMES.map(function(t){
-         return '<button class="chip'+(a.time===t.v?" on":"")+'" data-act="a_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>"+
-       '<div class="flabel">Energia</div><div class="chips">'+ENERGY.map(function(e){
-         return '<button class="chip'+(a.energy===e.v?" on":"")+'" data-act="a_en" data-v="'+e.v+'">'+e.l+"</button>";}).join("")+"</div>"+
-       '<div style="display:flex;gap:8px;margin-top:12px"><label class="f" style="flex:1.4"><div class="lb">Entro il (facoltativo)</div><input class="t" type="date" id="a_date"></label>'+
-       '<div class="f" style="flex:1"><div class="lb">Entro le</div>'+timeField("a_start","")+"</div></div>"+
-       '<div id="a_thint" class="quote" style="display:none;margin-top:-4px">'+TIME_HINT+
-         '<div style="margin-top:8px"><button class="btn sm" data-act="a_tocal">Inseriscilo in Calendario</button></div></div>'+
-       '<p class="hint" style="margin-top:-6px">Solo se esiste davvero una scadenza: la puoi fare anche prima.</p>';
-  } else if(L==="calendar"){
-    h+=lb("Impegno",'<input class="t" id="a_title" placeholder="Es. Dentista">')+
-       lb("Note",'<textarea class="t" id="a_note"></textarea>')+
-       '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb">Il giorno</div><input class="t" type="date" id="a_date" value="'+esc(ymd(today()))+'"></label>'+
-       '<div class="f" style="flex:1"><div class="lb">Alle (facoltativo)</div>'+timeField("a_start","")+"</div></div>"+
-       (state.config.contexts.length?lb("Contesto (facoltativo)",'<select class="t" id="a_ctx"><option value="">—</option>'+
-         state.config.contexts.map(function(c){return "<option"+(c===defaultCtx()?" selected":"")+">"+esc(c)+"</option>";}).join("")+"</select>"):"")+
-       '<div class="flabel">Durata</div><div class="chips">'+TIMES.map(function(t){
-         return '<button class="chip'+(a.time===t.v?" on":"")+'" data-act="a_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>"+
-       '<p class="hint">Qui va solo ci\u00f2 che <b>deve</b> accadere in quel giorno.</p>';
-  } else if(L==="waiting"){
-    h+=lb("Che cosa aspetti",'<input class="t" id="a_title" placeholder="Es. Rimborso dalla banca">')+
-       lb("Note",'<textarea class="t" id="a_note" placeholder="Da chi, da quando, riferimenti"></textarea>')+
-       lb("Data del controllo (facoltativa)",'<input class="t" type="date" id="a_date">');
-  } else if(L==="someday"){
-    h+=lb("Idea",'<input class="t" id="a_title" placeholder="Es. Corso di fotografia">')+
-       lb("Note",'<textarea class="t" id="a_note"></textarea>')+
-       lb("Data di riconsiderazione (facoltativa)",'<input class="t" type="date" id="a_date">')+
-       '<p class="hint">Nessun impegno: la rileggi in revisione.</p>';
-  } else {
+  if(L==="reference"){
     h+=lb("Titolo",'<input class="t" id="a_title" placeholder="Es. Codice cliente banca">')+
        lb("Contenuto",'<textarea class="t" id="a_note" style="min-height:130px"></textarea>')+
        '<p class="hint">Materiale che non richiede azione: nessun contesto, nessuna data. \u00c8 testo libero: le righe non hanno caselle da spuntare.</p>';
+    return h+"</div>"+'<div class="sfoot"><button class="btn pri full" data-act="a_save">Aggiungi</button></div>';
   }
+  var T={next:["Azione","Es. Chiamare la palestra"],calendar:["Impegno","Es. Dentista"],
+         waiting:["Che cosa aspetti","Es. Rimborso dalla banca"],someday:["Idea","Es. Corso di fotografia"]}[L]||["Titolo",""];
+  var w=dateWords(L);
+  h+=lb(T[0],'<input class="t" id="a_title" placeholder="'+esc(T[1])+'">')+
+     (L==="next"?'<p class="hint" style="margin-top:-8px">Scrivila come un\u2019azione concreta e visibile: \u00abChiamare la palestra\u00bb, non \u00abPalestra\u00bb.</p>':"")+
+     lb("Note",'<textarea class="t" id="a_note"'+(L==="waiting"?' placeholder="Da chi, da quando, riferimenti"':"")+"></textarea>");
+  if(hasF(L,"date")){
+    var dateReq=L==="calendar";
+    h+='<div style="display:flex;gap:8px'+(L==="next"?";margin-top:4px":"")+'"><label class="f" style="flex:1.4"><div class="lb">'+w.d+(dateReq?"":" (facoltativo)")+"</div>"+
+       '<input class="t" type="date" id="a_date"'+(dateReq?' value="'+esc(ymd(today()))+'"':"")+"></label>"+
+       (L==="next"||L==="calendar"?'<div class="f" style="flex:1"><div class="lb">'+w.t+(L==="calendar"?" (facoltativo)":"")+"</div>"+timeField("a_start","")+"</div>":"")+"</div>";
+    if(L==="next") h+='<div id="a_thint" class="quote" style="display:none;margin-top:-4px">'+TIME_HINT+
+         '<div style="margin-top:8px"><button class="btn sm" data-act="a_tocal">Inseriscilo in Calendario</button></div></div>'+
+       '<p class="hint" style="margin-top:-6px">Solo se esiste davvero una scadenza: la puoi fare anche prima.</p>';
+    if(L==="calendar") h+='<p class="hint" style="margin-top:-6px">Qui va solo ci\u00f2 che <b>deve</b> accadere in quel giorno.</p>';
+  }
+  if(hasF(L,"rec")) h+=recFields("a",null,L);
+  if(hasF(L,"ctx")) h+=lb("Contesto"+(L==="calendar"?" (facoltativo)":""),'<select class="t" id="a_ctx"><option value="">—</option>'+
+       state.config.contexts.map(function(c){return "<option"+(c===defaultCtx()?" selected":"")+">"+esc(c)+"</option>";}).join("")+"</select>");
+  if(hasF(L,"prj")&&!state.modal.pid) h+=lb("Progetto",'<select class="t" id="a_prj"><option value="">— nessuno —</option>'+
+       act.map(function(p){return '<option value="'+esc(p.id)+'">'+esc(p.title)+"</option>";}).join("")+"</select>");
+  if(hasF(L,"area")&&state.areas.length) h+=lb("Area di responsabilit\u00e0",'<select class="t" id="a_area"><option value="">—</option>'+areaOptions("")+"</select>");
+  if(hasF(L,"dur")) h+='<div class="flabel">'+(L==="calendar"?"Durata":"Tempo")+'</div><div class="chips">'+TIMES.map(function(t){
+       return '<button class="chip'+(a.time===t.v?" on":"")+'" data-act="a_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>";
+  if(hasF(L,"en")) h+='<div class="flabel">Energia</div><div class="chips">'+ENERGY.map(function(e){
+       return '<button class="chip'+(a.energy===e.v?" on":"")+'" data-act="a_en" data-v="'+e.v+'">'+e.l+"</button>";}).join("")+"</div>";
+  if(hasF(L,"focus")) h+='<div class="flabel">Priorit\u00e0</div><div class="chips"><button class="chip'+(a.focus?" on":"")+
+       '" data-act="a_focus" aria-pressed="'+(!!a.focus)+'">\u2605 In primo piano</button></div>';
+  if(L==="someday") h+='<p class="hint">Nessun impegno: la rileggi in revisione.</p>';
   return h+"</div>"+'<div class="sfoot"><button class="btn pri full" data-act="a_save">Aggiungi</button></div>';
 }
 
@@ -2063,33 +2089,24 @@ function mEdit(){
         :'<label class="f"><div class="lb">Lista</div><select class="t" id="e_list">'+
      ["inbox","project","next","waiting","calendar","someday","reference","trash"].map(function(k){
        return '<option value="'+k+'"'+(i.list===k?" selected":"")+">"+LISTS[k]+"</option>";}).join("")+"</select></label>")+
-   '<label class="f"><div class="lb">Contesto</div><select class="t" id="e_ctx"><option value="">—</option>'+
-     state.config.contexts.map(function(c){return '<option'+(i.context===c?" selected":"")+">"+esc(c)+"</option>";}).join("")+"</select></label>"+
-   '<label class="f"><div class="lb">Progetto</div><select class="t" id="e_prj"><option value="">— azione singola —</option>'+
+   fg(i.list,"ctx",'<label class="f"><div class="lb">Contesto</div><select class="t" id="e_ctx"><option value="">—</option>'+
+     state.config.contexts.map(function(c){return '<option'+(i.context===c?" selected":"")+">"+esc(c)+"</option>";}).join("")+"</select></label>")+
+   fg(i.list,"prj",'<label class="f"><div class="lb">Progetto</div><select class="t" id="e_prj"><option value="">— azione singola —</option>'+
      prjOptions(i.projectId)+"</select></label>"+
-   (i.projectId&&prj(i.projectId)?'<button class="btn sm" data-act="e_open" data-id="'+esc(i.projectId)+'" style="margin:-4px 0 14px">Apri "'+esc(prj(i.projectId).title)+'" →</button>':"")+
-   (state.areas.length?'<label class="f"><div class="lb">Area di responsabilit\u00e0</div><select class="t" id="e_area"><option value="">—</option>'+
+     (i.projectId&&prj(i.projectId)?'<button class="btn sm" data-act="e_open" data-id="'+esc(i.projectId)+'" style="margin:-4px 0 14px">Apri "'+esc(prj(i.projectId).title)+'" →</button>':""))+
+   (state.areas.length?fg(i.list,"area",'<label class="f"><div class="lb">Area di responsabilit\u00e0</div><select class="t" id="e_area"><option value="">—</option>'+
      areaOptions(i.areaId)+'</select></label><p class="hint" style="margin-top:-8px">'+
-     (i.projectId?"L\u2019azione sta in un progetto: vale l\u2019area del progetto.":"Per le azioni che non stanno in un progetto.")+"</p>":"")+
-   '<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb" id="e_dlb">'+dateWords(i.list).d+'</div><input class="t" type="date" id="e_date" value="'+esc(i.date||"")+'"></label>'+
-   '<div class="f" style="flex:1"><div class="lb" id="e_tlb">'+dateWords(i.list).t+"</div>"+timeField("e_start",i.start||"")+"</div></div>"+
+     (i.projectId?"L\u2019azione sta in un progetto: vale l\u2019area del progetto.":"Per le azioni che non stanno in un progetto.")+"</p>"):"")+
+   fg(i.list,"date",'<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb" id="e_dlb">'+dateWords(i.list).d+'</div><input class="t" type="date" id="e_date" value="'+esc(i.date||"")+'"></label>'+
+   '<div class="f" style="flex:1"><div class="lb" id="e_tlb">'+dateWords(i.list).t+"</div>"+timeField("e_start",i.start||"")+"</div></div>")+
    '<div id="e_thint" class="quote" style="'+(i.list==="next"&&i.start?"":"display:none;")+'margin-top:-4px">'+TIME_HINT+
      (done?"":'<div style="margin-top:8px"><button class="btn sm" data-act="e_tocal">Sposta in Calendario</button></div>')+"</div>"+
-   (function(){ var r=i.rec||{}, md=r.mode||(i.list==="calendar"?"fixed":"after");
-     return '<div style="display:flex;gap:8px"><label class="f" style="flex:0 0 76px"><div class="lb">Ogni</div>'+
-       '<input class="t" type="number" min="1" max="99" inputmode="numeric" id="e_every" value="'+esc(r.every||1)+'"></label>'+
-       '<label class="f" style="flex:1"><div class="lb">Ripetizione</div><select class="t" id="e_unit">'+
-       [["","Non si ripete"],["d","giorni"],["w","settimane"],["m","mesi"]].map(function(o){
-         return '<option value="'+o[0]+'"'+((r.unit||"")===o[0]?" selected":"")+">"+o[1]+"</option>";}).join("")+"</select></label></div>"+
-       '<label class="f"><div class="lb">La prossima si calcola</div><select class="t" id="e_recmode">'+
-       [["fixed","A calendario fisso (es. ogni luned\u00ec)"],["after","Dal completamento (es. 7 giorni dopo averla fatta)"]].map(function(o){
-         return '<option value="'+o[0]+'"'+(md===o[0]?" selected":"")+">"+o[1]+"</option>";}).join("")+"</select></label>";
-   })()+
-   '<div class="flabel">Tempo</div><div class="chips">'+TIMES.map(function(t){
-      return '<button class="chip '+(D.time===t.v?"on":"")+'" data-act="e_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>"+
-   '<div class="flabel">Energia</div><div class="chips">'+ENERGY.map(function(e){
-      return '<button class="chip '+(D.energy===e.v?"on":"")+'" data-act="e_en" data-v="'+e.v+'">'+e.l+"</button>";}).join("")+"</div>"+
-   '<div class="flabel">Priorit\u00e0</div><div class="chips"><button class="chip'+(D.focus?" on":"")+'" data-act="e_focus" aria-pressed="'+(!!D.focus)+'">\u2605 In primo piano</button></div>'+
+   fg(i.list,"rec",recFields("e",i.rec,i.list))+
+   fg(i.list,"dur",'<div class="flabel">'+(i.list==="calendar"?"Durata":"Tempo")+'</div><div class="chips">'+TIMES.map(function(t){
+      return '<button class="chip '+(D.time===t.v?"on":"")+'" data-act="e_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>")+
+   fg(i.list,"en",'<div class="flabel">Energia</div><div class="chips">'+ENERGY.map(function(e){
+      return '<button class="chip '+(D.energy===e.v?"on":"")+'" data-act="e_en" data-v="'+e.v+'">'+e.l+"</button>";}).join("")+"</div>")+
+   fg(i.list,"focus",'<div class="flabel">Priorit\u00e0</div><div class="chips"><button class="chip'+(D.focus?" on":"")+'" data-act="e_focus" aria-pressed="'+(!!D.focus)+'">\u2605 In primo piano</button></div>')+
    "</div>"+
    '<div class="sfoot"><button class="btn danger" data-act="e_del">'+(i.list==="trash"?"Elimina definitivamente":"Sposta nel cestino")+"</button>"+
    '<button class="btn pri" style="flex:1" data-act="e_save">Salva</button></div>';
@@ -2316,10 +2333,13 @@ document.addEventListener("click",function(ev){
     toast("Sar\u00e0 un appuntamento in Calendario: premi Salva per confermare"); return;
   }
   if(a==="a_tocal"){
+    var put0=function(id,v){ var x=document.getElementById(id); if(x&&v) x.value=v; };
     var keep={t:val("a_title"),n:val("a_note"),d:val("a_date"),s:val("a_start"),c:val("a_ctx")};
     var pidK=state.modal.pid||"";
+    var keepPrj=val("a_prj"), keepArea=val("a_area");
     state.add={time:state.add&&state.add.time||null,energy:null};
     open({t:"add",list:"calendar",pid:pidK});
+    put0("a_prj",keepPrj); put0("a_area",keepArea);
     var put=function(id,v){ var x=document.getElementById(id); if(x&&v) x.value=v; };
     put("a_title",keep.t); put("a_note",keep.n); put("a_date",keep.d||ymd(today())); put("a_ctx",keep.c);
     if(keep.s){ put("a_start_h",keep.s.slice(0,2)); var mm=document.getElementById("a_start_m");
@@ -2327,16 +2347,23 @@ document.addEventListener("click",function(ev){
     toast("Spostato in Calendario: controlla e salva"); return;
   }
   if(a==="a_time"){ state.add.time=state.add.time===+v?null:+v; renderModal(); return; }
+  if(a==="a_focus"){ state.add.focus=!state.add.focus; renderModal(); return; }
   if(a==="a_en"){ state.add.energy=state.add.energy===+v?null:+v; renderModal(); return; }
   if(a==="a_save"){
     var L=state.modal.list, ti=val("a_title");
     if(!ti){ toast("Serve un titolo"); return; }
     if(L==="calendar"&&!val("a_date")){ toast("Il calendario richiede una data"); return; }
     var o={id:uid(),title:ti,note:val("a_note"),list:L,createdAt:Date.now()};
-    if(L==="next"){ o.projectId=val("a_prj"); o.areaId=val("a_area"); o.context=val("a_ctx"); o.time=state.add.time||null; o.energy=state.add.energy||null; }
+    // si salva esattamente cio' che il modulo di quella lista mostra
+    if(hasF(L,"ctx")) o.context=val("a_ctx");
+    if(hasF(L,"prj")) o.projectId=val("a_prj");
+    if(hasF(L,"area")) o.areaId=val("a_area");
+    if(hasF(L,"dur")) o.time=state.add.time||null;
+    if(hasF(L,"en")) o.energy=state.add.energy||null;
+    if(hasF(L,"focus")&&state.add.focus) o.focus=true;
     if(state.modal.pid) o.projectId=state.modal.pid;
-    if(L==="calendar"){ o.time=state.add.time||null; o.context=val("a_ctx"); }
     o.date=val("a_date"); o.start=o.date?val("a_start"):"";
+    if(hasF(L,"rec")) readRec(o,null,"a");
     sanitize("items",o); normalizeDates(o);
     var back=state.modal.pid?{t:"prj",id:state.modal.pid}:null;
     putDoc("items",o); if(back) open(back); else close();
