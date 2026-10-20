@@ -884,7 +884,7 @@ function renderSync(){
 }
 
 /* ============ diagnostica ============ */
-var BUILD="49 — 19 ott 2026";
+var BUILD="50 — 20 ott 2026";
 var LOG=[];
 function showFatal(msg){
   LOG.push(msg);
@@ -1697,6 +1697,9 @@ function renderModal(){
   });
   if(fid){ var f=document.getElementById(fid);
     if(f){ f.focus(); try{ if(sel&&sel[0]!=null) f.setSelectionRange(sel[0],sel[1]); }catch(e){} } }
+  [].forEach.call(c.querySelectorAll("select[data-tf]"),function(x){
+    if(/_h$/.test(x.id)){ var m=document.getElementById(x.getAttribute("data-tf")+"_m"); if(m) m.disabled=!x.value; } });
+  ["a","e","w"].forEach(function(pre){ if(document.getElementById(pre+"_thint")) timeHint(pre); });
   restoreScroll(c,key); lastModalKey=key;
 }
 function sheetHead(title,back){
@@ -1709,7 +1712,7 @@ function startWizard(id,backPrj,fromStep){
   var it=state.items.find(function(x){return x.id===id;}); if(!it)return;
   state.wiz={id:id,step:"actionable",hist:[],path:[],back:backPrj?{t:"prj",id:backPrj}:null,d:{
     title:it.title,note:it.note||"",projectId:it.projectId||"",newPrj:"",outcome:"",
-    context:defaultCtx(),time:15,energy:2,date:"",start:"",timer:null,left:600}};
+    context:defaultCtx(),time:15,energy:2,date:"",start:"",areaId:it.areaId||"",focus:!!it.focus}};
   if(fromStep){ var pp=it.projectId?prj(it.projectId):null; state.wiz.step=fromStep; state.wiz.path=[pp?pp.title:"progetto","prossima azione"]; }
   open({t:"wizard"});
 }
@@ -1722,7 +1725,7 @@ function wpath(l){state.wiz.path.push(l);}
 function mWizard(){
   var w=state.wiz; if(!w)return"";
   var steps=["actionable","outcome","next","schedule","organize"];
-  var alias={nonaction:"actionable",newprj:"outcome",linkprj:"outcome",schedule2:"schedule",waitdate:"schedule"};
+  var alias={nonaction:"actionable",newprj:"outcome",linkprj:"outcome",schedule2:"schedule",waitdate:"schedule",laterdate:"schedule"};
   var si=Math.max(0,steps.indexOf(alias[w.step]||w.step));
   var bar='<div class="steps">'+steps.map(function(s,i){return '<i class="'+(i<=si?"on":"")+'"></i>';}).join("")+"</div>";
   var subj='<div class="subject"><div class="k">Elemento</div>'+esc(w.d.title)+"</div>";
@@ -1779,7 +1782,13 @@ function mWizard(){
   else if(w.step==="waitdate"){
     body=crumbs+'<div class="qhead">Quando la ricontrolli?</div><div class="qhelp">La data non \u00e8 un impegno: serve a ricordarti quando sollecitare. Puoi lasciarla vuota.</div>'+
       '<label class="f"><div class="lb">Data del controllo (facoltativa)</div><input class="t" type="date" id="w_wdate" value=""></label>'+
+      wizExtras("waiting")+
       '<button class="btn pri full" data-act="w_saveWait">Metti in attesa</button>';
+  }
+  else if(w.step==="laterdate"){
+    body=crumbs+'<div class="qhead">Quando la riconsideri?</div><div class="qhelp">Nessun impegno: la rileggi in revisione. Una data serve solo a ripescarla in un momento preciso.</div>'+
+      wizExtras("someday")+
+      '<button class="btn pri full" data-act="w_saveLater">Metti in Un giorno/Forse</button>';
   }
   else if(w.step==="schedule2"){
     body=crumbs+'<div class="qhead">Quando?</div>'+
@@ -1788,6 +1797,7 @@ function mWizard(){
       (state.config.contexts.length?'<label class="f"><div class="lb">Contesto (facoltativo)</div><select class="t" id="w_ccx"><option value="">—</option>'+
         state.config.contexts.map(function(c){return "<option"+(w.d.context===c?" selected":"")+">"+esc(c)+"</option>";}).join("")+
         '</select></label><p class="hint" style="margin-top:-8px">Dove o con cosa lo farai: utile anche per un appuntamento.</p>':"")+
+      wizExtras("calendar")+
       '<button class="btn pri full" data-act="w_saveCal">Metti in calendario</button>';
   }
   else if(w.step==="organize"){
@@ -1801,6 +1811,7 @@ function mWizard(){
         return '<button class="chip '+(w.d.time===t.v?"on":"")+'" data-act="w_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>"+
       '<div class="flabel">Energia richiesta</div><div class="chips">'+ENERGY.map(function(e){
         return '<button class="chip '+(w.d.energy===e.v?"on":"")+'" data-act="w_en" data-v="'+e.v+'">'+e.l+"</button>";}).join("")+"</div>"+
+      wizExtras("next")+
       '<button class="btn pri full" data-act="w_saveNext" style="margin-top:14px">Metti in prossime azioni</button>';
   }
   return sheetHead("Chiarire",w.hist.length>0)+'<div class="sbody">'+bar+body+"</div>";
@@ -1814,6 +1825,9 @@ function wizFinish(patch){
   o.title=w.d.title; o.note=w.d.note; o.projectId=w.d.projectId||"";
   o.context=""; o.time=null; o.energy=null; o.who=""; o.date=""; o.start="";
   Object.assign(o,patch);
+  if(!o.focus) delete o.focus;
+  if(o.rec===undefined) o.rec=null;
+  normalizeDates(o);
   putDoc("items",o);
   var back=w.back;
   close();
@@ -1888,6 +1902,42 @@ function recFields(pre,r,list){
       return '<option value="'+o[0]+'"'+(md===o[0]?" selected":"")+">"+o[1]+"</option>";}).join("")+"</select></label>";
 }
 
+/* Nel chiarimento, l'ultimo passo di ogni strada offre gli stessi campi della
+   scheda di modifica: una volta smistata, l'azione non deve richiedere ritocchi. */
+function wizExtras(list){
+  var w=state.wiz, d=w.d, h="";
+  if(hasF(list,"area")&&state.areas.length){
+    var pa=d.projectId?areaOf(prj(d.projectId)):null;
+    h+=d.projectId
+      ? (pa?'<p class="hint">Area: <b>'+esc(pa.title)+"</b>, quella del progetto.</p>":"")
+      : '<label class="f"><div class="lb">Area di responsabilit\u00e0</div><select class="t" id="w_area"><option value="">—</option>'+areaOptions(d.areaId||"")+"</select></label>";
+  }
+  if(list==="next"){
+    var dw=dateWords("next");
+    h+='<div style="display:flex;gap:8px"><label class="f" style="flex:1.4"><div class="lb">'+dw.d+' (facoltativo)</div><input class="t" type="date" id="w_ndate" value=""></label>'+
+       '<div class="f" style="flex:1"><div class="lb">'+dw.t+"</div>"+timeField("w_nstart","")+"</div></div>"+
+       '<div id="w_thint" class="quote" style="display:none;margin-top:-4px">'+TIME_HINT+
+         '<div style="margin-top:8px"><button class="btn sm" data-act="w_tocal">Mettila in Calendario</button></div></div>';
+  }
+  if(list==="someday"){
+    h+='<label class="f"><div class="lb">'+dateWords("someday").d+' (facoltativo)</div><input class="t" type="date" id="w_sdate" value=""></label>';
+  }
+  if(hasF(list,"rec")) h+=recFields("w",null,list);
+  if(list==="calendar"&&hasF(list,"dur")) h+='<div class="flabel">Durata</div><div class="chips">'+TIMES.map(function(t){
+      return '<button class="chip '+(d.time===t.v?"on":"")+'" data-act="w_time" data-v="'+t.v+'">'+t.l+"</button>";}).join("")+"</div>";
+  if(hasF(list,"focus")) h+='<div class="flabel">Priorit\u00e0</div><div class="chips"><button class="chip'+(d.focus?" on":"")+
+      '" data-act="w_focus" aria-pressed="'+(!!d.focus)+'">\u2605 In primo piano</button></div>';
+  return h;
+}
+/* raccoglie dal passo finale i campi in piu' */
+function wizExtraPatch(list,patch){
+  var d=state.wiz.d;
+  if(hasF(list,"area")) patch.areaId=d.projectId?"":val("w_area");
+  if(hasF(list,"rec")){ var tmp={date:patch.date||""}; readRec(tmp,null,"w"); patch.rec=tmp.rec; if(tmp.rec&&!patch.date) patch.date=tmp.date; }
+  if(hasF(list,"focus")) patch.focus=!!d.focus;
+  return patch;
+}
+
 /* cosa significa la data, a seconda della lista */
 function dateWords(list){
   if(list==="next") return {d:"Entro il",t:"Entro le"};
@@ -1900,8 +1950,8 @@ var TIME_HINT="Un\u2019ora precisa? Se deve accadere proprio allora \u00e8 un ap
 /* il promemoria compare solo quando si mette un'ora su una prossima azione */
 function timeHint(pre){
   var box=document.getElementById(pre+"_thint"); if(!box) return;
-  var list=pre==="e"?val("e_list"):(state.modal&&state.modal.list);
-  box.style.display=(list==="next"&&val(pre+"_start"))?"":"none";
+  var list=pre==="e"?val("e_list"):pre==="w"?"next":(state.modal&&state.modal.list);
+  box.style.display=(list==="next"&&val(pre==="w"?"w_nstart":pre+"_start"))?"":"none";
 }
 function relabelDates(){
   var w=dateWords(val("e_list")), d=document.getElementById("e_dlb"), t=document.getElementById("e_tlb");
@@ -2446,14 +2496,27 @@ document.addEventListener("click",function(ev){
   }
   if(a==="w_cal"){wpath("terreno rigido");wgo("schedule2");return;}
   if(a==="w_wait"){wpath("in attesa");wgo("waitdate");return;}
-  if(a==="w_later"){wpath("un giorno");wizFinish({list:"someday"});return;}
-  if(a==="w_saveWait"){wizFinish({list:"waiting",date:val("w_wdate")});return;}
+  if(a==="w_later"){wpath("un giorno");wgo("laterdate");return;}
+  if(a==="w_saveLater"){wizFinish(wizExtraPatch("someday",{list:"someday",date:val("w_sdate")}));return;}
+  if(a==="w_saveWait"){wizFinish(wizExtraPatch("waiting",{list:"waiting",date:val("w_wdate")}));return;}
+  if(a==="w_focus"){ w.d.focus=!w.d.focus; renderModal(); return; }
+  if(a==="w_tocal"){
+    // stessi dati, strada del calendario
+    w.d.date=val("w_ndate")||ymd(today()); w.d.start=val("w_nstart"); w.d.areaId=val("w_area");
+    var pl=w.path.indexOf("quando posso"); if(pl>=0) w.path.splice(pl,1);
+    wpath("terreno rigido"); wgo("schedule2");
+    toast("Spostata sul Calendario: controlla e conferma"); return;
+  }
   if(a==="w_anytime"){wpath("quando posso");wgo("organize");return;}
-  if(a==="w_saveCal"){var dd=val("w_date"); if(!dd){toast("Serve una data");return;} wizFinish({list:"calendar",date:dd,start:val("w_start"),context:val("w_ccx")});return;}
+  if(a==="w_saveCal"){var dd=val("w_date"); if(!dd){toast("Serve una data");return;} wizFinish(wizExtraPatch("calendar",{list:"calendar",date:dd,start:val("w_start"),context:val("w_ccx"),time:w.d.time}));return;}
   if(a==="w_ctx"){w.d.context=v;renderModal();return;}
   if(a==="w_time"){w.d.time=+v;renderModal();return;}
   if(a==="w_en"){w.d.energy=+v;renderModal();return;}
-  if(a==="w_saveNext"){wizFinish({list:"next",context:w.d.context,time:w.d.time,energy:w.d.energy});return;}
+  if(a==="w_saveNext"){
+    var nd=val("w_ndate");
+    wizFinish(wizExtraPatch("next",{list:"next",context:w.d.context,time:w.d.time,energy:w.d.energy,date:nd,start:nd?val("w_nstart"):""}));
+    return;
+  }
 
   /* edit */
   if(a==="e_focus"){ if(!state.draft)return; state.draft.focus=!state.draft.focus; renderModal(); return; }
